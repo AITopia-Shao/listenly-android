@@ -132,7 +132,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2, verified 2026-10-13
         with:
           api-level: ${{ matrix.api }}
-          target: google_apis
+          target: ${{ matrix.api == 36 && 'default' || 'google_apis' }}
           arch: x86_64
           profile: pixel_7
           cores: 2
