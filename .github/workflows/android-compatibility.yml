@@ -110,6 +110,9 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle --timeout=30
+          if test -e /dev/kvm; then sudo chmod 0666 /dev/kvm; fi
+          ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
       - name: Exercise the installed app and collect runtime evidence
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2, verified 2026-10-13
@@ -117,12 +120,14 @@ jobs:
           api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
-          profile: pixel_7_pro
+          profile: pixel_7
           cores: 2
-          ram-size: 2048M
+          ram-size: 3072M
+          disk-size: 2048M
           disable-linux-hw-accel: false
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: df -h "$ANDROID_HOME" "$ANDROID_AVD_HOME"
           script: node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}
       - name: Save the APK and runtime evidence, including failed runs
         if: always()

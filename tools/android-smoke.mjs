@@ -73,8 +73,9 @@ try{
  await poll('document.querySelector(".feedback")');
  result.answer=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
  await evaluate('document.querySelector("[data-action=nav][data-route=home]").click()');
+ await evaluate('window.__listenlyReloadProbe=true');
  await rpc('Page.reload');
- await poll('document.querySelector(".focus-card")');
+ await poll('!window.__listenlyReloadProbe && document.querySelector(".focus-card")');
  result.restoredAnswers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
  assert.deepEqual(result.restoredAnswers,result.answer,'Answers survive WebView page reload');
  result.after=run(['shell','pidof','cn.listenly.app']).trim();

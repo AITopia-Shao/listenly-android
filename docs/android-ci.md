@@ -6,6 +6,8 @@
 
 工作流显式创建独立的 SDK 目录，并使用固定提交的 SDK 初始化 Action 安装 Google command-line tools 20.0（14742923）及构建包，将 `sdkmanager` / `avdmanager` / `adb` 加入 PATH。`ANDROID_HOME` 与 `ANDROID_SDK_ROOT` 设置为同一目录，直接构建器和模拟器 Action 共用它；不会依赖 Ubuntu 镜像碰巧预装或暴露 `sdkmanager`。路径和版本记录在 `sdk-environment.log`。
 
+模拟器使用 Pixel 7 的现代竖屏比例、3 GiB 内存和 2 GiB 数据分区；明确设置分区大小以避免 API 36 默认大分区超过托管运行器剩余空间。KVM 配置等待 udev 生效，再确认设备权限；设备缺失仍会使测试失败。启动前打印剩余磁盘空间，方便区分环境问题和应用问题。
+
 构建直接使用 JDK 21 与官方 SDK 36 / Build Tools 36.0.0 的 AAPT2、javac、D8、zipalign、apksigner，不依赖当前 Gradle 插件下载。`minSdk`、`targetSdk` 和应用版本从工程文件读取；目前保持 API 26 / 37。使用 SDK 36 编译与面向 API 37 是明确的构建选择，并不作为闪退修复结论。
 
 每台模拟器都会真正安装、启动 APK，检查进程仍存活、主页渲染、安卓原生资源拦截、音频解码、触摸播放、两种模式进度对齐和互动答题。结果不能只凭签名或 ZIP 检查判定通过。工作流不更新模拟器的系统 WebView；旧 WebView 的解析或行为问题会直接使测试失败。
