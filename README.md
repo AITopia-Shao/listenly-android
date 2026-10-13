@@ -72,7 +72,7 @@ python tools/build-apk-ci.py --sdk "$ANDROID_HOME" --java-home "$JAVA_HOME"
 ./gradlew assembleDebug
 ```
 
-Windows 使用 `.\gradlew.bat assembleDebug`。Gradle 的 `preBuild` 自动构建兼容前端并准备独立示例资产，调试包位于 `app/build/outputs/apk/debug/`。当前实际验收的是上面的直接 SDK 构建和云端 CI；本轮没有执行 Gradle 构建。
+Windows 使用 `.\gradlew.bat assembleDebug`。Gradle 的 `preBuild` 自动构建兼容前端并准备独立示例资产，调试包位于 `app/build/outputs/apk/debug/`。Wrapper 9.6.0 已验证可运行；当前完成 APK 验收的是上面的直接 SDK 构建和云端 CI，完整 Gradle APK 构建尚未验证。
 
 ## 验证与兼容性
 
@@ -96,6 +96,8 @@ npm run test:ui
 | 本地 Android 16 | 旧轻量 APK 复现启动崩溃；1.0.2 更新包播放、交互和渲染进程故障恢复通过 |
 
 三版本回归证据：[成功的 Actions 运行](https://github.com/AITopia-Shao/listenly-android/actions/runs/38424901772)。**realme GT7 / realme UI 7.0 尚未直接测试**；模拟器结果只证明所列环境上的行为。详细范围与故障记录见 [Android 启动故障与兼容性验证](docs/android-runtime-findings.md)。
+
+首次开源构建的原创示例与三系统回归也已[全部通过](https://github.com/AITopia-Shao/listenly-android/actions/runs/38430091913)。公开 Release APK 的安装、触摸播放和保留答案检查见 [开源发布验收](docs/open-source-release.md)。
 
 ## 参与开发与许可
 

@@ -85,6 +85,10 @@ try{
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
  if(publicDemo)assert.ok(result.audio.source.endsWith('/media/morning.wav'),'The original public demo recording is served');
+ if(publicDemo){
+  result.playbackStart=await evaluate('(()=>{var a=document.querySelector("#audio");a.pause();a.currentTime=0;return a.currentTime})()');
+  assert.equal(result.playbackStart,0,'Original demo starts at zero so playback progression is measurable');
+ }
  // Use an Android input event so WebView receives the same gesture as a real screen tap.
  const tapPlay=async()=>{
   await evaluate('document.querySelector("[data-action=play]").scrollIntoView({block:"center"})');
@@ -105,7 +109,7 @@ try{
  await poll('document.querySelector(".quiz-card") && document.querySelector("#audio").readyState >= 1');
  result.modeTime=await evaluate('document.querySelector("#audio").currentTime');
  assert.ok(Math.abs(result.modeTime-10)<.5,'Native playback timeline preserved when changing mode');
- if(publicDemo)await evaluate('document.querySelector("[data-action=question][data-index=0]").click()');
+ if(publicDemo)await evaluate('document.querySelector(\'[data-action=question][data-index="0"]\').click()');
  await evaluate(publicDemo?'document.querySelector("[data-action=answer][data-option=B]").click();document.querySelector("[data-action=submit-answer]").click()':'document.querySelector("[data-action=answer]").click();document.querySelector("[data-action=submit-answer]").click()');
  await poll('document.querySelector(".feedback")');
  if(publicDemo){
