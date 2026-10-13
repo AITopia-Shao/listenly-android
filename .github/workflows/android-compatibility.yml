@@ -143,8 +143,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           pre-emulator-launch-script: |
             df -h "$ANDROID_HOME" "$ANDROID_AVD_HOME"
-            task_free_kib="$(df -Pk "$ANDROID_AVD_HOME" | awk 'NR==2 {print $4}')"
-            test "$task_free_kib" -ge 8388608
+            test "$(df -Pk "$ANDROID_AVD_HOME" | awk 'NR==2 {print $4}')" -ge 8388608
           script: node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}
       - name: Save the APK and runtime evidence, including failed runs
         if: always()
