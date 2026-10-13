@@ -71,6 +71,20 @@ jobs:
           task_sdk="$RUNNER_TEMP/listenly-android-sdk"
           mkdir -p "$task_sdk"
           printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$task_sdk" "$task_sdk" >> "$GITHUB_ENV"
+      - name: Free the unused preinstalled SDK on this disposable runner
+        shell: bash
+        run: |
+          test "$RUNNER_ENVIRONMENT" = 'github-hosted'
+          task_preinstalled_sdk='/usr/local/lib/android/sdk'
+          task_active_sdk="$(realpath -m "$ANDROID_HOME")"
+          test "$task_active_sdk" = "$(realpath -m "$RUNNER_TEMP/listenly-android-sdk")"
+          if test -d "$task_preinstalled_sdk"; then
+            test "$(realpath "$task_preinstalled_sdk")" = "$task_preinstalled_sdk"
+            test "$task_active_sdk" != "$task_preinstalled_sdk"
+            du -sh "$task_preinstalled_sdk"
+            sudo rm -rf -- "$task_preinstalled_sdk"
+          fi
+          df -h "$RUNNER_TEMP"
       - name: Install SDK command-line tools and Android build packages
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4, verified 2026-10-13
         with:
@@ -123,11 +137,14 @@ jobs:
           profile: pixel_7
           cores: 2
           ram-size: 3072M
-          disk-size: 2048M
+          disk-size: 6144M
           disable-linux-hw-accel: false
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          pre-emulator-launch-script: df -h "$ANDROID_HOME" "$ANDROID_AVD_HOME"
+          pre-emulator-launch-script: |
+            df -h "$ANDROID_HOME" "$ANDROID_AVD_HOME"
+            task_free_kib="$(df -Pk "$ANDROID_AVD_HOME" | awk 'NR==2 {print $4}')"
+            test "$task_free_kib" -ge 8388608
           script: node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}
       - name: Save the APK and runtime evidence, including failed runs
         if: always()
