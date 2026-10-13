@@ -1,0 +1,115 @@
+name: Android compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - app/src/main/java/**
+      - app/src/main/res/**
+      - app/src/main/AndroidManifest.xml
+      - app/src/main/assets/web/*.js
+      - app/src/main/assets/web/*.html
+      - app/src/main/assets/web/*.css
+      - app/build.gradle
+      - tools/android-smoke.mjs
+      - tools/build-apk-ci.py
+      - tools/prepare-ci-assets.py
+      - tools/build-web-compat.mjs
+      - package.json
+      - package-lock.json
+      - .github/workflows/android-compatibility.yml
+  pull_request:
+    paths:
+      - app/src/main/java/**
+      - app/src/main/res/**
+      - app/src/main/AndroidManifest.xml
+      - app/src/main/assets/web/*.js
+      - app/src/main/assets/web/*.html
+      - app/src/main/assets/web/*.css
+      - app/build.gradle
+      - tools/android-smoke.mjs
+      - tools/build-apk-ci.py
+      - tools/prepare-ci-assets.py
+      - tools/build-web-compat.mjs
+      - package.json
+      - package-lock.json
+      - .github/workflows/android-compatibility.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-compatibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: Install, launch and interact on Android API ${{ matrix.api }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 30, 36]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, verified 2026-10-13
+        with:
+          persist-credentials: false
+      - name: Set up Java 21
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install the official Android build tools
+        shell: bash
+        run: |
+          sdkmanager --licenses < <(yes) > /tmp/listenly-sdk-licenses.log
+          sdkmanager --install 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+      - name: Test source logic
+        run: node --test tests/alignment.test.mjs tests/importer.test.mjs
+      - name: Build the frontend for older Android WebView
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:web
+      - name: Prepare original fixtures and build the APK
+        run: |
+          python3 tools/prepare-ci-assets.py
+          python3 tools/build-apk-ci.py
+      - name: Enable Linux KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Exercise the installed app and collect runtime evidence
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2, verified 2026-10-13
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7_pro
+          cores: 2
+          ram-size: 2048M
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}
+      - name: Save the APK and runtime evidence, including failed runs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: listenly-android-api-${{ matrix.api }}-${{ github.run_attempt }}
+          path: |
+            dist/listenly-ci-fixture.apk
+            .build/ci/build.json
+            .build/ci/build.log
+            .build/runtime-results/api-${{ matrix.api }}/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

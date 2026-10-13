@@ -1,0 +1,20 @@
+{
+  "name": "listenly-android",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:web": "node tools/build-web-compat.mjs",
+    "start": "node tools/preview.mjs",
+    "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs",
+    "test:ui": "node tests/ui.test.mjs",
+    "test:materials": "python -m unittest discover -s tests -p test_*.py"
+  },
+  "devDependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/preset-env": "7.29.7",
+    "core-js": "3.50.0",
+    "esbuild": "0.28.2",
+    "playwright": "1.57.0"
+  }
+}

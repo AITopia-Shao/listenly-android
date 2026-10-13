@@ -1,0 +1,15 @@
+.build/
+.tools/
+node_modules/
+dist/
+materials/
+*.keystore
+*.jks
+*.apk
+*.pyc
+__pycache__/
+local.properties
+app/src/main/assets/web/media/
+app/src/main/assets/web/bundled-library.json
+app/src/main/assets/web/demo.json
+app/src/main/assets/web/app.compat.js
