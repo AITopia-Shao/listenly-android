@@ -21,7 +21,7 @@ try{
  result.android=run(['shell','getprop','ro.build.version.release']).trim();
  result.api=run(['shell','getprop','ro.build.version.sdk']).trim();
  result.install=run(['install','-r',path.resolve(apk)]).trim();
- run(['logcat','-c']);
+ try{run(['logcat','-c'])}catch(error){result.logClearWarning=String(error.message)}
  run(['shell','am','force-stop','cn.listenly.app']);
  result.launch=run(['shell','am','start','-W','-n','cn.listenly.app/.MainActivity']).trim();
  await wait(5000);
@@ -32,7 +32,8 @@ try{
  await writeFile(path.join(root,'logcat.log'),log);
  await writeFile(path.join(root,'screen.png'),run(['exec-out','screencap','-p'],true));
  assert.ok(result.pid,'App process must remain alive after launch');
- assert.ok(!crash.includes('FATAL EXCEPTION')&&!crash.includes('signal 11'),'No Java or native fatal exception');
+ const appCrash=crash.split('\n').filter(line=>new RegExp(`\\s${result.pid}\\s`).test(line)||line.includes('cn.listenly.app')).join('\n');
+ assert.ok(!appCrash.includes('FATAL EXCEPTION')&&!appCrash.includes('signal 11'),'No app Java or native fatal exception');
  const unix=run(['shell','cat','/proc/net/unix']);
  const remote=`webview_devtools_remote_${result.pid}`;
  assert.ok(unix.includes(remote),'Loaded WebView exposes debug target');
@@ -49,16 +50,19 @@ try{
  const poll=async expression=>{for(let i=0;i<30;i++){const value=await evaluate(expression);if(value)return value;await wait(500)}throw new Error(`UI readiness failed: ${expression}`)};
  result.home=await poll('document.querySelector(".focus-card") && document.body.innerText');
  assert.ok(result.home.includes('拾听'));
+ result.webview=await evaluate('navigator.userAgent');
+ result.viewport=await evaluate('({width:innerWidth,height:innerHeight,contentWidth:document.documentElement.scrollWidth})');
+ assert.ok(result.viewport.contentWidth<=result.viewport.width+1,'Mobile page fits the viewport');
  await evaluate('document.querySelector(".focus-card [data-action=open]").click()');
  await poll('document.querySelector("#audio").readyState >= 1');
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
- // Browser user-gesture requirements are satisfied through CDP Input, not JS autoplay bypass.
- const play=await evaluate('(()=>{var r=document.querySelector("[data-action=play]").getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()');
- await rpc('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:play.x,y:play.y}]});
- await rpc('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
- await wait(1500);
- result.playback=await evaluate('({paused:document.querySelector("#audio").paused,time:document.querySelector("#audio").currentTime})');
+ // Use an Android input event so WebView receives the same gesture as a real screen tap.
+ await evaluate('document.querySelector("[data-action=play]").scrollIntoView({block:"center"})');
+ result.tap=await evaluate('(()=>{var b=document.querySelector("[data-action=play]"),r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return {x:x,y:y,scale:devicePixelRatio,hit:document.elementFromPoint(x,y).closest("[data-action=play]")===b}})()');
+ assert.ok(result.tap.hit,'Visible touch target is the play button');
+ run(['shell','input','tap',String(Math.round(result.tap.x*result.tap.scale)),String(Math.round(result.tap.y*result.tap.scale))]);
+ result.playback=await poll('(()=>{var a=document.querySelector("#audio");return !a.paused&&a.currentTime>0?{paused:a.paused,time:a.currentTime}:null})()');
  assert.equal(result.playback.paused,false,'Native WebView audio plays after a touch');
  assert.ok(result.playback.time>0,'Native audio playback progresses');
  await evaluate('document.querySelector("#audio").pause();document.querySelector("#audio").currentTime=10;document.querySelector("[data-action=mode][data-mode=exam]").click()');
@@ -69,6 +73,10 @@ try{
  await poll('document.querySelector(".feedback")');
  result.answer=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
  await evaluate('document.querySelector("[data-action=nav][data-route=home]").click()');
+ await rpc('Page.reload');
+ await poll('document.querySelector(".focus-card")');
+ result.restoredAnswers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
+ assert.deepEqual(result.restoredAnswers,result.answer,'Answers survive WebView page reload');
  result.after=run(['shell','pidof','cn.listenly.app']).trim();
  assert.equal(result.after,result.pid);
  result.verified=true;

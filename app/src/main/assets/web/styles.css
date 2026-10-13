@@ -11,6 +11,9 @@
  .app-shell{min-height:100vh;padding:calc(30px + var(--safe-top)) 36px calc(115px + var(--safe-bottom))}
  .bottom-nav{padding-left:20px;padding-right:20px}
  .dialog{max-height:85vh}
+ .dialog-shade,.busy{top:0;right:0;bottom:0;left:0}
+ .brand-icon,.icon-btn,.step-icon,.row-play,.option .letter,.question-dot,.result-ring,.result-ring>span{align-items:center;justify-items:center}
+ .result-ring{background:#d5e1ce}
  @media(max-width:760px){
   .app-shell{padding:calc(22px + var(--safe-top)) 22px calc(103px + var(--safe-bottom))}
   .practice-shell{padding-bottom:calc(315px + var(--safe-bottom))}

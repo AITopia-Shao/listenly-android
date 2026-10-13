@@ -211,6 +211,15 @@ public final class MainActivity extends Activity {
         webView = null;
         disposeWebView(failed);
         StringBuilder diagnostic = new StringBuilder("拾听启动诊断\n");
+        boolean providerUnavailable = false;
+        int causeDepth = 0;
+        for (Throwable cause = failure; cause != null && causeDepth++ < 32; cause = cause.getCause()) {
+            if (cause.getClass().getName().contains("MissingWebViewPackageException")) {
+                providerUnavailable = true;
+                break;
+            }
+            if (cause.getCause() == cause) break;
+        }
         diagnostic.append("设备: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL)
                 .append("\nAndroid: ").append(Build.VERSION.RELEASE).append(" (API ")
                 .append(Build.VERSION.SDK_INT).append(")\n目标 API: ").append(getApplicationInfo().targetSdkVersion);
@@ -220,6 +229,7 @@ public final class MainActivity extends Activity {
         } catch (Exception unavailable) { diagnostic.append("\n应用版本: 无法读取"); }
         try {
             PackageInfo provider = WebView.getCurrentWebViewPackage();
+            if (provider == null) providerUnavailable = true;
             diagnostic.append("\nWebView: ").append(provider == null ? "未找到提供程序" :
                     provider.packageName + " " + provider.versionName);
         } catch (RuntimeException | LinkageError unavailable) {
@@ -237,7 +247,8 @@ public final class MainActivity extends Activity {
         heading.setText("拾听 · 启动遇到问题"); heading.setTextSize(23); heading.setTextColor(Color.rgb(25, 61, 55));
         layout.addView(heading);
         TextView explanation = new TextView(this);
-        explanation.setText(stage + "。可以重试，或复制诊断信息帮助排查。导入材料和学习记录会保留。");
+        explanation.setText(stage + "。可以重试，或复制诊断信息帮助排查。导入材料和学习记录会保留。" +
+                (providerUnavailable ? "可在系统设置中启用或更新网页组件后重试。" : ""));
         explanation.setTextSize(15); explanation.setPadding(0, padding / 2, 0, padding / 2);
         layout.addView(explanation);
         Button retry = new Button(this); retry.setText("重试打开");
@@ -270,6 +281,9 @@ public final class MainActivity extends Activity {
         }
         if (Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(false);
+            // PhoneWindow.getInsetsController() dereferences mDecor on API 30.
+            // onCreate runs before setContentView, so create the decor first.
+            getWindow().getDecorView();
             WindowInsetsController controller = getWindow().getInsetsController();
             if (controller != null) controller.setSystemBarsAppearance(
                     WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
@@ -288,7 +302,7 @@ public final class MainActivity extends Activity {
         String[] names = {"top", "bottom", "left", "right"};
         float[] values = {insetTop, insetBottom, insetLeft, insetRight};
         JSONObject detail = new JSONObject();
-        StringBuilder js = new StringBuilder("(function(){var s=document.documentElement.style;");
+        StringBuilder js = new StringBuilder("(function(){if(!document.documentElement)return;var s=document.documentElement.style;");
         try {
             for (int i = 0; i < names.length; i++) {
                 detail.put(names[i], values[i]);
