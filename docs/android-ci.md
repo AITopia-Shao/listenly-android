@@ -24,7 +24,9 @@ API 26 / 30 使用 Google APIs 镜像，API 36 使用已在本地实际验证的
 
 CI 使用临时生成的测试签名，无法覆盖安装本机签名的完整版或轻量版。**不要将云端夹具 APK 当作用户更新包安装。** 真机修复安装包仍使用本地原签名构建，保留已有学习记录。
 
-上传源码时，只需 `.github/workflows/android-compatibility.yml`、`app/build.gradle`、`app/src/main/AndroidManifest.xml`、`app/src/main/java/`、`app/src/main/res/`、`app/src/main/assets/web/` 中的 `.html/.js/.css` 模块、`package.json` / `package-lock.json`、`tools/build-web-compat.mjs`、`tools/android-smoke.mjs`、两个 CI Python 脚本以及 `tests/alignment.test.mjs` / `tests/importer.test.mjs`。不要上传 `.build/`、`dist/`、任何 keystore、`materials/`、`assets/web/media/` 或真题 `bundled-library.json`。工作流先构建兼容旧版 WebView 的前端，再由脚本重新生成测试 JSON 和音频。
+公开仓库包含应用源码、标准 Gradle 工程、构建与测试脚本，以及 `examples/demo/` 内的原创朗读示例。`.build/`、`dist/`、任何 keystore、`materials/`、生产目录 `assets/web/media/` 和真实 `bundled-library.json` 均被忽略。工作流先构建兼容旧版 WebView 的前端，再由脚本生成独立资产。
+
+另一个 `demo` 任务从公开源码构建原创英语演示测试 APK，校验两篇原文、录音和时间戳，再用 Chromium 测试播放、三种文本显示、模式对齐、评分、文件夹导入、重启恢复及四种屏幕宽度。该包也使用临时签名，仅供测试；Release 安装包在本机构建，沿用项目原签名，密钥不上传。
 
 本地复现构建：
 

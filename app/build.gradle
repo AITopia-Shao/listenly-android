@@ -14,7 +14,23 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+    // Public builds use original examples rather than a developer's local corpus.
+    sourceSets {
+        main { assets.srcDirs = [rootProject.file('.build/demo/main/assets')] }
+    }
     buildTypes {
         release { minifyEnabled false }
     }
 }
+
+def taskWindows = System.getProperty('os.name').toLowerCase().contains('windows')
+def buildWeb = tasks.register('buildWeb', Exec) {
+    workingDir rootProject.projectDir
+    commandLine(taskWindows ? 'npm.cmd' : 'npm', 'run', 'build:web')
+}
+def prepareDemoAssets = tasks.register('prepareDemoAssets', Exec) {
+    dependsOn buildWeb
+    workingDir rootProject.projectDir
+    commandLine(taskWindows ? 'python' : 'python3', 'tools/prepare-demo-assets.py')
+}
+tasks.named('preBuild').configure { dependsOn prepareDemoAssets }

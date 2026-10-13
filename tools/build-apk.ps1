@@ -2,9 +2,11 @@ param(
     [string]$SdkPath = 'C:\Program Files (x86)\Android\android-sdk',
     [string]$JdkPath = 'C:\Program Files\Android\openjdk\jdk-21.0.8',
     [string]$OutputPath = '',
-    [switch]$Lite
+    [switch]$Lite,
+    [switch]$Demo
 )
 $ErrorActionPreference = 'Stop'
+if ($Demo -and $Lite) { throw '-Demo and -Lite cannot be combined.' }
 function Invoke-BuildTool([string]$Executable, [string[]]$Arguments) {
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Build command failed ($LASTEXITCODE): $Executable" }
@@ -17,7 +19,9 @@ if ($taskAppConfig -notmatch '\bversionCode\s+(\d+)') { throw 'Android app versi
 $taskVersionCode = $Matches[1]
 if ($taskAppConfig -notmatch "\bversionName\s+'([^']+)'") { throw 'Android app versionName not found' }
 $taskVersionName = $Matches[1]
-if (!$OutputPath) { $OutputPath = Join-Path $taskRoot $(if ($Lite) { 'dist\拾听-轻量版.apk' } else { 'dist\拾听.apk' }) }
+if (!$OutputPath) {
+    $OutputPath = Join-Path $taskRoot $(if ($Demo) { "dist\listenly-demo-$taskVersionName.apk" } elseif ($Lite) { 'dist\拾听-轻量版.apk' } else { 'dist\拾听.apk' })
+}
 $OutputPath = [IO.Path]::GetFullPath($OutputPath)
 $taskTools = Get-ChildItem -LiteralPath (Join-Path $SdkPath 'build-tools') -Directory |
     Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'aapt2.exe') } |
@@ -35,6 +39,8 @@ foreach ($taskExe in @($taskJava,$taskJavac,$taskKeytool)) {
 }
 $taskNpmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if (!$taskNpmCommand) { throw 'npm.cmd not found; install Node.js and run npm ci in the project first.' }
+$taskPythonCommand = Get-Command python -ErrorAction SilentlyContinue
+if (!$taskPythonCommand) { throw 'Python 3.10 or newer is required to create Android-compatible APK ZIP entries.' }
 # Generate the classic Chromium 58 entry before taking the Android asset snapshot.
 # This prevents APKs from shipping an outdated bundle after source changes.
 Push-Location -LiteralPath $taskRoot
@@ -47,9 +53,14 @@ if (!(Test-Path -LiteralPath $taskCompatPath -PathType Leaf) -or (Get-Item -Lite
 foreach ($taskDir in @($taskBuild,$taskSavedBuild,(Join-Path $taskBuild 'gen'),(Join-Path $taskBuild 'classes'),(Join-Path $taskBuild 'dex'),[IO.Path]::GetDirectoryName($OutputPath))) {
     New-Item -ItemType Directory -Force -Path $taskDir | Out-Null
 }
-# Keep compiler paths simple and stage a consistent snapshot. Lite edition copies
-# only the two demo recordings and the latest complete real paper's audio.
+# Keep compiler paths simple and stage a consistent snapshot. Demo edition uses
+# only public original examples. Lite edition also copies the latest complete paper.
 $taskMainSource = Join-Path $taskRoot 'app\src\main'
+if ($Demo) {
+    $taskDemoMain = Join-Path $taskRoot '.build\demo\main'
+    Invoke-BuildTool $taskPythonCommand.Source @((Join-Path $taskRoot 'tools\prepare-demo-assets.py'),'--output',$taskDemoMain)
+    $taskMainSource = $taskDemoMain
+}
 $taskWebSource = Join-Path $taskMainSource 'assets\web'
 $taskAudioPattern = '\.(mp3|m4a|aac|wav|ogg|opus|flac|mp4)$'
 $taskKeepAudio = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -110,6 +121,7 @@ foreach ($taskAudioPath in $taskKeepAudio) {
     if (!(Test-Path -LiteralPath $taskAudioPath -PathType Leaf)) { throw "Missing bundled audio: $taskAudioPath" }
 }
 if ($Lite) { Write-Host "Lite edition: $($taskSelected.title); $($taskKeepAudio.Count) recordings" }
+if ($Demo) { Write-Host "Public demo edition: original examples only; $($taskKeepAudio.Count) recordings" }
 $taskCorpusPrefix = (Join-Path $taskWebSource 'media\cet6') + '\'
 foreach ($taskSource in Get-ChildItem -LiteralPath $taskMainSource -File -Recurse) {
     $taskRelative = $taskSource.FullName.Substring($taskMainSource.Length + 1)
@@ -150,33 +162,14 @@ $taskSources += @(Get-ChildItem -LiteralPath (Join-Path $taskBuild 'gen') -Filte
 Invoke-BuildTool $taskJavac (@('--release','8','-encoding','UTF-8','-classpath',$taskJar,'-d',(Join-Path $taskBuild 'classes')) + $taskSources)
 $taskClasses = @(Get-ChildItem -LiteralPath (Join-Path $taskBuild 'classes') -Filter '*.class' -Recurse | ForEach-Object { $_.FullName })
 Invoke-BuildTool $taskJava (@('-cp',(Join-Path $taskTools.FullName 'lib\d8.jar'),'com.android.tools.r8.D8','--min-api','26','--lib',$taskJar,'--output',(Join-Path $taskBuild 'dex')) + $taskClasses)
-Add-Type -AssemblyName System.IO.Compression
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$taskArchive = [IO.Compression.ZipFile]::OpenRead($taskBase)
 $taskNormalizedApk = Join-Path $taskBuild 'normalized.apk'
-$taskNewArchive = [IO.Compression.ZipFile]::Open($taskNormalizedApk, [IO.Compression.ZipArchiveMode]::Create)
-try {
-    # Stream a normalized ZIP without buffering the complete audio corpus in RAM.
-    # Android requires resources.arsc to stay uncompressed for this target SDK;
-    # compressed audio codecs stay uncompressed to permit efficient asset seeks.
-    foreach ($taskEntry in $taskArchive.Entries) {
-        $taskName = $taskEntry.FullName.Replace('\','/')
-        $taskCompression = [IO.Compression.CompressionLevel]::Optimal
-        if ($taskName -eq 'resources.arsc' -or $taskName -match '\.(m4a|aac|mp3|ogg|opus|flac|mp4)$') {
-            $taskCompression = [IO.Compression.CompressionLevel]::NoCompression
-        }
-        $taskReplacement = $taskNewArchive.CreateEntry($taskName,$taskCompression)
-        $taskInput = $taskEntry.Open()
-        $taskOutput = $taskReplacement.Open()
-        try { $taskInput.CopyTo($taskOutput) }
-        finally { $taskInput.Dispose(); $taskOutput.Dispose() }
-    }
-    foreach ($taskDex in Get-ChildItem -LiteralPath (Join-Path $taskBuild 'dex') -Filter '*.dex') {
-        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($taskNewArchive,$taskDex.FullName,$taskDex.Name,[IO.Compression.CompressionLevel]::Optimal) | Out-Null
-    }
-} finally { $taskNewArchive.Dispose(); $taskArchive.Dispose() }
+# .NET Framework's NoCompression may still emit ZIP method 8. Android needs
+# resources.arsc to use actual ZIP_STORED (method 0), so normalize with Python.
+# The helper streams entries and does not buffer the complete audio corpus.
+$taskNormalizeTool = Join-Path $taskRoot 'tools\normalize-apk.py'
+Invoke-BuildTool $taskPythonCommand.Source @($taskNormalizeTool,$taskBase,$taskNormalizedApk,'--dex-dir',(Join-Path $taskBuild 'dex'))
 $taskAligned = Join-Path $taskBuild 'aligned.apk'
-Invoke-BuildTool (Join-Path $taskTools.FullName 'zipalign.exe') @('-p','-f','4',$taskNormalizedApk,$taskAligned)
+Invoke-BuildTool (Join-Path $taskTools.FullName 'zipalign.exe') @('-P','16','-f','4',$taskNormalizedApk,$taskAligned)
 $taskKeystore = Join-Path $taskSavedBuild 'debug.keystore'
 if (!(Test-Path -LiteralPath $taskKeystore)) {
     Invoke-BuildTool $taskKeytool @('-genkeypair','-keystore',$taskKeystore,'-storepass','android','-keypass','android','-alias','androiddebugkey','-dname','CN=Listenly Debug,O=Local,C=CN','-keyalg','RSA','-keysize','2048','-validity','10000')
@@ -184,6 +177,8 @@ if (!(Test-Path -LiteralPath $taskKeystore)) {
 $taskSigned = Join-Path $taskBuild 'signed.apk'
 Invoke-BuildTool $taskJava @('-jar',(Join-Path $taskTools.FullName 'lib\apksigner.jar'),'sign','--ks',$taskKeystore,'--ks-key-alias','androiddebugkey','--ks-pass','pass:android','--key-pass','pass:android','--out',$taskSigned,$taskAligned)
 Invoke-BuildTool $taskJava @('-jar',(Join-Path $taskTools.FullName 'lib\apksigner.jar'),'verify','--verbose',$taskSigned)
+Invoke-BuildTool $taskPythonCommand.Source @($taskNormalizeTool,'--verify',$taskSigned)
+Invoke-BuildTool (Join-Path $taskTools.FullName 'zipalign.exe') @('-c','-P','16','4',$taskSigned)
 Copy-Item -LiteralPath $taskSigned -Destination $OutputPath -Force
 Write-Host "APK ready: $OutputPath"
 $taskTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

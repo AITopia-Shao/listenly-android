@@ -1,13 +1,21 @@
 {
   "name": "listenly-android",
-  "version": "1.0.0",
+  "version": "1.0.2",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AITopia-Shao/listenly-android.git"
+  },
   "private": true,
   "type": "module",
   "scripts": {
     "build:web": "node tools/build-web-compat.mjs",
+    "prepare:demo": "npm run build:web && python tools/prepare-demo-assets.py",
     "start": "node tools/preview.mjs",
+    "start:demo": "node tools/preview.mjs --demo",
     "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs",
-    "test:ui": "node tests/ui.test.mjs",
+    "test:demo": "python -m unittest discover -s tests -p test_demo_assets.py",
+    "test:ui": "node tests/ui.test.mjs --demo",
     "test:materials": "python -m unittest discover -s tests -p test_*.py"
   },
   "devDependencies": {

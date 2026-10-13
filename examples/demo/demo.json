@@ -1,0 +1,236 @@
+{
+  "id": "listenly-original",
+  "title": "拾听原创 · 日常英语",
+  "source": {
+    "title": "拾听原创示例，非六级真题",
+    "license": "CC0-1.0"
+  },
+  "isDemo": true,
+  "articles": [
+    {
+      "id": "morning",
+      "title": "A small change, a better morning",
+      "type": "短文",
+      "duration": 34.412,
+      "audio": {
+        "intensive": "media/morning.wav",
+        "exam": "media/morning.wav"
+      },
+      "transcript": [
+        {
+          "start": 0.0,
+          "en": "For years, Emma began every morning by checking her phone.",
+          "zh": "多年来，艾玛每天早晨的第一件事就是看手机。",
+          "timed": true
+        },
+        {
+          "start": 5.329,
+          "en": "Before she even got out of bed, she was already thinking about work.",
+          "zh": "她还没起床，就已经在想着工作了。",
+          "timed": true
+        },
+        {
+          "start": 11.268,
+          "en": "One Monday, she decided to leave her phone in the kitchen overnight.",
+          "zh": "一个星期一，她决定把手机留在厨房里过夜。",
+          "timed": true
+        },
+        {
+          "start": 16.921,
+          "en": "The next morning, she opened the window and made herself a cup of tea.",
+          "zh": "第二天早晨，她打开窗户，给自己泡了一杯茶。",
+          "timed": true
+        },
+        {
+          "start": 22.675,
+          "en": "It was a small change, but it gave her ten quiet minutes to start the day.",
+          "zh": "这是个小改变，却让她有了十分钟的安静时光来开启一天。",
+          "timed": true
+        },
+        {
+          "start": 28.779,
+          "en": "Now, she says that a better morning does not have to be a busy one.",
+          "zh": "现在，她说，更好的早晨不一定要忙碌。",
+          "timed": true
+        }
+      ],
+      "questions": [
+        {
+          "id": "q1",
+          "number": 1,
+          "prompt": "What did Emma use to do first in the morning?",
+          "options": [
+            {
+              "id": "A",
+              "text": "Make a cup of tea."
+            },
+            {
+              "id": "B",
+              "text": "Check her phone."
+            },
+            {
+              "id": "C",
+              "text": "Open the kitchen window."
+            },
+            {
+              "id": "D",
+              "text": "Go for a short walk."
+            }
+          ],
+          "answer": "B",
+          "explanation": "开头提到：Emma began every morning by checking her phone。注意 used to 表示过去的习惯。"
+        },
+        {
+          "id": "q2",
+          "number": 2,
+          "prompt": "Where did she leave her phone overnight?",
+          "options": [
+            {
+              "id": "A",
+              "text": "In the kitchen."
+            },
+            {
+              "id": "B",
+              "text": "Beside her bed."
+            },
+            {
+              "id": "C",
+              "text": "At her office."
+            },
+            {
+              "id": "D",
+              "text": "Near the window."
+            }
+          ],
+          "answer": "A",
+          "explanation": "她决定 leave her phone in the kitchen overnight，把手机放在厨房里过夜。"
+        },
+        {
+          "id": "q3",
+          "number": 3,
+          "prompt": "What did this small change give Emma?",
+          "options": [
+            {
+              "id": "A",
+              "text": "More time to work."
+            },
+            {
+              "id": "B",
+              "text": "A chance to sleep longer."
+            },
+            {
+              "id": "C",
+              "text": "Ten quiet minutes."
+            },
+            {
+              "id": "D",
+              "text": "A busier morning routine."
+            }
+          ],
+          "answer": "C",
+          "explanation": "文章直接说 it gave her ten quiet minutes to start the day，强调更平静地开始一天。"
+        }
+      ]
+    },
+    {
+      "id": "library",
+      "title": "The little library on the corner",
+      "type": "短文",
+      "duration": 35.172,
+      "audio": {
+        "intensive": "media/library.wav",
+        "exam": "media/library.wav"
+      },
+      "transcript": [
+        {
+          "start": 0.0,
+          "en": "Last spring, our neighborhood opened a small library in an empty shop.",
+          "zh": "去年春天，我们社区在一家空置的商店里开了一个小图书馆。",
+          "timed": true
+        },
+        {
+          "start": 6.118,
+          "en": "It has no staff, and visitors can borrow books without a library card.",
+          "zh": "这里没有工作人员，访客不用借书证就可以借书。",
+          "timed": true
+        },
+        {
+          "start": 12.362,
+          "en": "The only rule is to bring a book back, or leave a different one for someone else.",
+          "zh": "唯一的规则是还一本书，或者留下另一本给其他人。",
+          "timed": true
+        },
+        {
+          "start": 18.731,
+          "en": "At first, people worried that the shelves would soon be empty.",
+          "zh": "最初，人们担心书架很快就会空了。",
+          "timed": true
+        },
+        {
+          "start": 24.019,
+          "en": "Instead, the library now has more books than it did on its first day.",
+          "zh": "结果恰恰相反，图书馆现在的书比开馆第一天还多。",
+          "timed": true
+        },
+        {
+          "start": 29.973,
+          "en": "Sometimes, a little trust is all a community needs.",
+          "zh": "有时候，一个社区所需要的只是一点信任。",
+          "timed": true
+        }
+      ],
+      "questions": [
+        {
+          "id": "q1",
+          "number": 1,
+          "prompt": "What makes this library unusual?",
+          "options": [
+            {
+              "id": "A",
+              "text": "It sells books to visitors."
+            },
+            {
+              "id": "B",
+              "text": "It only opens in spring."
+            },
+            {
+              "id": "C",
+              "text": "It has no staff or library cards."
+            },
+            {
+              "id": "D",
+              "text": "It is inside a school."
+            }
+          ],
+          "answer": "C",
+          "explanation": "第二句说明 no staff 和 without a library card，是图书馆的特别之处。"
+        },
+        {
+          "id": "q2",
+          "number": 2,
+          "prompt": "What happened to the number of books?",
+          "options": [
+            {
+              "id": "A",
+              "text": "It increased."
+            },
+            {
+              "id": "B",
+              "text": "It stayed the same."
+            },
+            {
+              "id": "C",
+              "text": "It fell to zero."
+            },
+            {
+              "id": "D",
+              "text": "It was never counted."
+            }
+          ],
+          "answer": "A",
+          "explanation": "more books than it did on its first day 表明书的数量增加了。"
+        }
+      ]
+    }
+  ]
+}

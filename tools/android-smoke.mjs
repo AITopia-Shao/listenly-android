@@ -5,8 +5,9 @@ import path from 'node:path';
 import http from 'node:http';
 import assert from 'node:assert/strict';
 
-const [serial,apk,label='runtime']=process.argv.slice(2);
-if(!serial?.startsWith('emulator-')||!apk)throw new Error('Usage: node tools/android-smoke.mjs emulator-5554 app.apk label');
+const [serial,apk,label='runtime',...flags]=process.argv.slice(2);
+const publicDemo=flags.includes('--demo');
+if(!serial?.startsWith('emulator-')||!apk||flags.some(flag=>flag!=='--demo'))throw new Error('Usage: node tools/android-smoke.mjs emulator-5554 app.apk label [--demo]');
 const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME;
 const adb=process.env.ADB||(sdk?path.join(sdk,'platform-tools',process.platform==='win32'?'adb.exe':'adb'):
   process.platform==='win32'?'C:/Program Files (x86)/Android/android-sdk/platform-tools/adb.exe':'adb');
@@ -16,7 +17,7 @@ const run=(args,binary=false)=>execFileSync(adb,['-s',serial,...args],{encoding:
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const httpJSON=url=>new Promise((resolve,reject)=>http.get(url,response=>{let body='';response.on('data',data=>body+=data);response.on('end',()=>{try{resolve(JSON.parse(body))}catch(error){reject(error)}})}).on('error',reject));
 let socket,forwarded=false;
-const result={serial,label,apk:path.resolve(apk),checkedAt:new Date().toISOString()};
+const result={serial,label,apk:path.resolve(apk),checkedAt:new Date().toISOString(),...(publicDemo?{content:'original-public-demo'}:{})};
 async function recoverSystemUiDialog(stage){
  run(['shell','uiautomator','dump','/sdcard/listenly-smoke-ui.xml']);
  const xml=run(['shell','cat','/sdcard/listenly-smoke-ui.xml']);
@@ -38,6 +39,11 @@ async function recoverSystemUiDialog(stage){
  return true;
 }
 try{
+ if(publicDemo){
+  assert.equal(run(['shell','getprop','ro.kernel.qemu']).trim(),'1','Demo interaction must run on an emulator');
+  result.avd=run(['emu','avd','name']).trim().split(/\r?\n/)[0].trim();
+  assert.ok(result.avd.startsWith('Listenly_'),'Public demo check uses this project AVD');
+ }
  result.android=run(['shell','getprop','ro.build.version.release']).trim();
  result.api=run(['shell','getprop','ro.build.version.sdk']).trim();
  if(Number(result.api)>=36){await wait(30000);await recoverSystemUiDialog('startup')}
@@ -74,10 +80,11 @@ try{
  result.webview=await evaluate('navigator.userAgent');
  result.viewport=await evaluate('({width:innerWidth,height:innerHeight,contentWidth:document.documentElement.scrollWidth})');
  assert.ok(result.viewport.contentWidth<=result.viewport.width+1,'Mobile page fits the viewport');
- await evaluate('document.querySelector(".focus-card [data-action=open]").click()');
+ await evaluate(publicDemo?'document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click();document.querySelector("[data-action=mode][data-mode=intensive]").click()':'document.querySelector(".focus-card [data-action=open]").click()');
  await poll('document.querySelector("#audio").readyState >= 1');
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
+ if(publicDemo)assert.ok(result.audio.source.endsWith('/media/morning.wav'),'The original public demo recording is served');
  // Use an Android input event so WebView receives the same gesture as a real screen tap.
  const tapPlay=async()=>{
   await evaluate('document.querySelector("[data-action=play]").scrollIntoView({block:"center"})');
@@ -98,9 +105,18 @@ try{
  await poll('document.querySelector(".quiz-card") && document.querySelector("#audio").readyState >= 1');
  result.modeTime=await evaluate('document.querySelector("#audio").currentTime');
  assert.ok(Math.abs(result.modeTime-10)<.5,'Native playback timeline preserved when changing mode');
- await evaluate('document.querySelector("[data-action=answer]").click();document.querySelector("[data-action=submit-answer]").click()');
+ if(publicDemo)await evaluate('document.querySelector("[data-action=question][data-index=0]").click()');
+ await evaluate(publicDemo?'document.querySelector("[data-action=answer][data-option=B]").click();document.querySelector("[data-action=submit-answer]").click()':'document.querySelector("[data-action=answer]").click();document.querySelector("[data-action=submit-answer]").click()');
  await poll('document.querySelector(".feedback")');
+ if(publicDemo){
+  result.feedback=await evaluate('document.querySelector(".feedback").innerText');
+  assert.ok(result.feedback.includes('答对了'),'Choosing original demo answer B grades correctly');
+ }
  result.answer=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
+ if(publicDemo){
+  const answered=Object.entries(result.answer).filter(([key])=>{const [paper,article]=JSON.parse(key);return paper==='listenly-original'&&article==='morning'}).map(([,answer])=>answer);
+  assert.ok(answered.some(answer=>answer.choice==='B'&&answer.submitted),'The original demo answer B is saved');
+ }
  await evaluate('document.querySelector("[data-action=nav][data-route=home]").click()');
  await evaluate('window.__listenlyReloadProbe=true');
  await rpc('Page.reload');

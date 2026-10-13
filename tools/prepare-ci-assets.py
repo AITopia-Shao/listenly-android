@@ -41,6 +41,10 @@ def prepare(output: Path) -> None:
         elif filename in referenced_scripts:
             raise FileNotFoundError(f"Run npm run build:web before staging: missing {filename}")
     media = web / "media"
+    for filename, destination in (("LICENSE", "LICENSE.txt"), ("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.txt")):
+        notice = ROOT / filename
+        if notice.is_file():
+            shutil.copyfile(notice, web / destination)
     media.mkdir()
     # Quiet PCM markers test decoding, seek and playback. They are not English speech.
     rate, duration = 16000, 24

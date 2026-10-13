@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct Android SDK build of the original-fixture CI APK; no release keystore."""
+"""Direct SDK build of the CI fixture or --demo original examples, using a temporary test key."""
 from __future__ import annotations
 
 import argparse
@@ -24,19 +24,42 @@ def build(args: argparse.Namespace) -> None:
     java_home = args.java_home.resolve()
     tools = sdk / "build-tools" / args.build_tools
     android_jar = sdk / "platforms" / f"android-{args.compile_api}" / "android.jar"
-    staged = args.staged_main.resolve()
-    output = args.output.resolve()
-    if not staged.is_relative_to((ROOT / ".build" / "ci").resolve()):
-        raise ValueError("Only source staged by tools/prepare-ci-assets.py may be packaged")
+    staging_type = "demo" if args.demo else "ci"
+    staged = (args.staged_main or ROOT / ".build" / staging_type / "main").resolve()
+    staging_root = (ROOT / ".build" / staging_type).resolve()
+    output = (args.output or ROOT / "dist" / ("listenly-demo-test.apk" if args.demo else "listenly-ci-fixture.apk")).resolve()
+    if not staging_root.is_relative_to(ROOT) or not staged.is_relative_to(staging_root) or staged == staging_root:
+        raise ValueError(f"Only source staged inside .build/{staging_type} may be packaged")
     fixture = json.loads((staged / "assets" / "web" / "demo.json").read_text(encoding="utf-8"))
     library = json.loads((staged / "assets" / "web" / "bundled-library.json").read_text(encoding="utf-8"))
-    if not fixture.get("testFixture") or library.get("papers") != []:
-        raise ValueError("CI builds require an original fixture and an empty real-paper library")
+    if library.get("papers") != []:
+        raise ValueError("CI and public demo builds require an empty real-paper library")
     allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "demo.json", "bundled-library.json")}
-    allowed.add("assets/web/media/ci-playback.wav")
-    for filename in ("app.compat.js", "compat-polyfills.js"):
+    if args.demo:
+        examples = ROOT / "examples" / "demo"
+        original = json.loads((examples / "demo.json").read_text(encoding="utf-8-sig"))
+        if not fixture.get("isDemo") or fixture.get("source", {}).get("license") != "CC0-1.0" or fixture != original:
+            raise ValueError("Public demos must contain the unchanged original CC0 example")
+        for article in original["articles"]:
+            for reference in article["audio"].values():
+                if not re.fullmatch(r"media/[a-zA-Z0-9_-]+\.wav", reference):
+                    raise ValueError("Original demo recording must use a local WAV reference")
+                example_audio = (examples / reference).resolve()
+                if not example_audio.is_relative_to(examples.resolve()):
+                    raise ValueError("Demo recording escapes the original example directory")
+                packaged_audio = staged / "assets" / "web" / reference
+                if hashlib.sha256(example_audio.read_bytes()).digest() != hashlib.sha256(packaged_audio.read_bytes()).digest():
+                    raise ValueError(f"Public demo recording differs from the original example: {reference}")
+                allowed.add(f"assets/web/{reference}")
+    else:
+        if not fixture.get("testFixture"):
+            raise ValueError("CI builds require an explicitly labelled original test fixture")
+        allowed.add("assets/web/media/ci-playback.wav")
+    for filename in ("app.compat.js", "compat-polyfills.js", "LICENSE.txt"):
         if (staged / "assets" / "web" / filename).is_file():
             allowed.add(f"assets/web/{filename}")
+    if (staged / "assets" / "web" / "THIRD_PARTY_NOTICES.txt").is_file():
+        allowed.add("assets/web/THIRD_PARTY_NOTICES.txt")
     actual = {item.relative_to(staged).as_posix() for item in (staged / "assets").rglob("*") if item.is_file()}
     if actual != allowed:
         raise ValueError(f"Unexpected or missing CI assets: {sorted(actual.symmetric_difference(allowed))}")
@@ -51,7 +74,7 @@ def build(args: argparse.Namespace) -> None:
     version_code = re.search(r"\bversionCode\s+(\d+)", config).group(1)
     version_name = re.search(r"\bversionName\s+'([^']+)'", config).group(1)
     output.parent.mkdir(parents=True, exist_ok=True)
-    results = ROOT / ".build" / "ci"
+    results = ROOT / ".build" / staging_type
     results.mkdir(parents=True, exist_ok=True)
     work_parent = (args.work_dir or results).resolve()
     work_parent.mkdir(parents=True, exist_ok=True)
@@ -116,9 +139,10 @@ def build(args: argparse.Namespace) -> None:
             shutil.copyfile(work / "signed.apk", output)
     metadata = {"apk": str(output), "sha256": hashlib.sha256(output.read_bytes()).hexdigest(), "compileApi": args.compile_api,
                 "minSdk": int(min_sdk), "targetSdk": int(target_sdk), "versionCode": int(version_code), "versionName": version_name,
-                "testFixture": True, "realPapers": 0, "signing": "disposable CI test key, incompatible with installed local APK"}
+                "testFixture": not args.demo, "originalDemo": args.demo,
+                "realPapers": 0, "signing": "disposable CI test key, incompatible with installed local APK"}
     (results / "build.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Built CI fixture APK: {output} ({output.stat().st_size} bytes)")
+    print(f"Built {'original demo' if args.demo else 'CI fixture'} APK: {output} ({output.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":
@@ -128,6 +152,7 @@ if __name__ == "__main__":
     parser.add_argument("--compile-api", type=int, default=36)
     parser.add_argument("--build-tools", default="36.0.0")
     parser.add_argument("--work-dir", type=Path, help="Temporary build parent; an ASCII-only path is recommended on Windows")
-    parser.add_argument("--staged-main", type=Path, default=ROOT / ".build" / "ci" / "main")
-    parser.add_argument("--output", type=Path, default=ROOT / "dist" / "listenly-ci-fixture.apk")
+    parser.add_argument("--demo", action="store_true", help="Build the CC0 original examples staged by tools/prepare-demo-assets.py; still uses a temporary test signing key")
+    parser.add_argument("--staged-main", type=Path, help="Defaults to .build/demo/main with --demo, otherwise .build/ci/main")
+    parser.add_argument("--output", type=Path, help="Defaults to dist/listenly-demo-test.apk with --demo, otherwise dist/listenly-ci-fixture.apk")
     build(parser.parse_args())

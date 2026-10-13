@@ -1,5 +1,13 @@
 .build/
 .tools/
+.gradle/
+**/build/
+.idea/
+*.iml
+.env
+.env.*
+*.pem
+*.p12
 node_modules/
 dist/
 materials/
@@ -13,3 +21,6 @@ app/src/main/assets/web/media/
 app/src/main/assets/web/bundled-library.json
 app/src/main/assets/web/demo.json
 app/src/main/assets/web/app.compat.js
+# Local account helpers are not part of the published application.
+tools/github-project.py
+tools/github-actions.py
