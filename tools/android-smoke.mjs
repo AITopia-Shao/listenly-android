@@ -12,14 +12,35 @@ const adb=process.env.ADB||(sdk?path.join(sdk,'platform-tools',process.platform=
   process.platform==='win32'?'C:/Program Files (x86)/Android/android-sdk/platform-tools/adb.exe':'adb');
 const root=path.resolve('.build/runtime-results',label);
 await mkdir(root,{recursive:true});
-const run=(args,binary=false)=>execFileSync(adb,['-s',serial,...args],{encoding:binary?undefined:'utf8',timeout:120000,windowsHide:true});
+const run=(args,binary=false)=>execFileSync(adb,['-s',serial,...args],{encoding:binary?undefined:'utf8',timeout:120000,maxBuffer:16*1024*1024,windowsHide:true});
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const httpJSON=url=>new Promise((resolve,reject)=>http.get(url,response=>{let body='';response.on('data',data=>body+=data);response.on('end',()=>{try{resolve(JSON.parse(body))}catch(error){reject(error)}})}).on('error',reject));
 let socket,forwarded=false;
 const result={serial,label,apk:path.resolve(apk),checkedAt:new Date().toISOString()};
+async function recoverSystemUiDialog(stage){
+ run(['shell','uiautomator','dump','/sdcard/listenly-smoke-ui.xml']);
+ const xml=run(['shell','cat','/sdcard/listenly-smoke-ui.xml']);
+ if(!xml.includes("System UI isn't responding")){
+  assert.ok(!xml.includes("isn't responding"),'An application ANR must not be dismissed');
+  return false;
+ }
+ await writeFile(path.join(root,`system-ui-${stage}.xml`),xml);
+ await writeFile(path.join(root,`system-ui-${stage}.png`),run(['exec-out','screencap','-p'],true));
+ const button=xml.match(/<node\b[^>]*text="Wait"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+ assert.ok(button,'Known emulator System UI ANR has an accessible Wait button');
+ const [,left,top,right,bottom]=button.map(Number);
+ run(['shell','input','tap',String(Math.round((left+right)/2)),String(Math.round((top+bottom)/2))]);
+ (result.systemUiRecoveries??=[]).push({stage,action:'Wait',process:'System UI'});
+ await wait(15000);
+ run(['shell','uiautomator','dump','/sdcard/listenly-smoke-ui.xml']);
+ const after=run(['shell','cat','/sdcard/listenly-smoke-ui.xml']);
+ assert.ok(!after.includes("isn't responding"),'Emulator System UI must recover before app interaction');
+ return true;
+}
 try{
  result.android=run(['shell','getprop','ro.build.version.release']).trim();
  result.api=run(['shell','getprop','ro.build.version.sdk']).trim();
+ if(Number(result.api)>=36){await wait(30000);await recoverSystemUiDialog('startup')}
  result.install=run(['install','-r',path.resolve(apk)]).trim();
  try{run(['logcat','-c'])}catch(error){result.logClearWarning=String(error.message)}
  run(['shell','am','force-stop','cn.listenly.app']);
@@ -58,11 +79,19 @@ try{
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
  // Use an Android input event so WebView receives the same gesture as a real screen tap.
- await evaluate('document.querySelector("[data-action=play]").scrollIntoView({block:"center"})');
- result.tap=await evaluate('(()=>{var b=document.querySelector("[data-action=play]"),r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return {x:x,y:y,scale:devicePixelRatio,hit:document.elementFromPoint(x,y).closest("[data-action=play]")===b}})()');
- assert.ok(result.tap.hit,'Visible touch target is the play button');
- run(['shell','input','tap',String(Math.round(result.tap.x*result.tap.scale)),String(Math.round(result.tap.y*result.tap.scale))]);
- result.playback=await poll('(()=>{var a=document.querySelector("#audio");return !a.paused&&a.currentTime>0?{paused:a.paused,time:a.currentTime}:null})()');
+ const tapPlay=async()=>{
+  await evaluate('document.querySelector("[data-action=play]").scrollIntoView({block:"center"})');
+  result.tap=await evaluate('(()=>{var b=document.querySelector("[data-action=play]"),r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return {x:x,y:y,scale:devicePixelRatio,hit:document.elementFromPoint(x,y).closest("[data-action=play]")===b}})()');
+  assert.ok(result.tap.hit,'Visible touch target is the play button');
+  run(['shell','input','tap',String(Math.round(result.tap.x*result.tap.scale)),String(Math.round(result.tap.y*result.tap.scale))]);
+ };
+ const playing='(()=>{var a=document.querySelector("#audio");return !a.paused&&a.currentTime>0?{paused:a.paused,time:a.currentTime}:null})()';
+ await tapPlay();
+ try{result.playback=await poll(playing)}catch(error){
+  if(!await recoverSystemUiDialog('playback'))throw error;
+  assert.ok(await evaluate('document.querySelector("#audio").paused'),'Retry only a tap blocked by the system dialog');
+  await tapPlay();result.playback=await poll(playing);
+ }
  assert.equal(result.playback.paused,false,'Native WebView audio plays after a touch');
  assert.ok(result.playback.time>0,'Native audio playback progresses');
  await evaluate('document.querySelector("#audio").pause();document.querySelector("#audio").currentTime=10;document.querySelector("[data-action=mode][data-mode=exam]").click()');
