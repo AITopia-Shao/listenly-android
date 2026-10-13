@@ -20,6 +20,8 @@ Windows PowerShell 5 的旧 `.NET` 压缩流程曾将 `resources.arsc` 写成方
 
 [开源源码的云端运行 38430091913](https://github.com/AITopia-Shao/listenly-android/actions/runs/38430091913) 在提交 `d6ecc4c3eb81466334ca736af32a321e69dbf44a` 完成四个成功任务：原创英语演示包的 Linux SDK 构建和 Chromium 交互检查，以及 Android 8 / 11 / 16 的安装、启动、原生触摸播放、模式对齐、答题和页面重载回归。每个任务保存 APK 与相应证据。后续文档或测试脚本调整不改变安装包中的应用代码。
 
+发布标签 `v1.0.2` 指向 `845e5f186f55cf96577189977b5a309736a6fbe8`，该提交的[最终运行 38431767735](https://github.com/AITopia-Shao/listenly-android/actions/runs/38431767735) 也完成上述四个成功任务。公开 APK 已无需登录下载，并验证下载文件的 SHA-256 与本地发布文件完全一致。
+
 公开 Release APK 另外在本地 Android 16 / Chromium 133 上实际安装并冷启动：页面 412×915，无横向溢出；原创录音 34.412154 秒可解码、真实触摸播放时间递增；10 秒位置在两种模式间保留；选择 B 得到正确反馈，重载后答案保留；起止应用进程一致，崩溃日志为空。
 
 本地原始证据保存在 `.build/runtime-results/public-demo-api36/`，完整云端证据可从上述运行的 Artifacts 下载。Playwright 另验证了 360 / 393 / 430 / 1280 像素宽度、三种文本显示、错误答案反馈、真实文件夹导入和 IndexedDB 重载恢复。

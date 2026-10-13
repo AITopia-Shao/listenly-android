@@ -97,7 +97,7 @@ npm run test:ui
 
 三版本回归证据：[成功的 Actions 运行](https://github.com/AITopia-Shao/listenly-android/actions/runs/38424901772)。**realme GT7 / realme UI 7.0 尚未直接测试**；模拟器结果只证明所列环境上的行为。详细范围与故障记录见 [Android 启动故障与兼容性验证](docs/android-runtime-findings.md)。
 
-首次开源构建的原创示例与三系统回归也已[全部通过](https://github.com/AITopia-Shao/listenly-android/actions/runs/38430091913)。公开 Release APK 的安装、触摸播放和保留答案检查见 [开源发布验收](docs/open-source-release.md)。
+发布标签 `v1.0.2` 对应源码的原创示例构建与三系统回归已[全部通过](https://github.com/AITopia-Shao/listenly-android/actions/runs/38431767735)。公开 Release APK 的安装、触摸播放和保留答案检查见 [开源发布验收](docs/open-source-release.md)。
 
 ## 参与开发与许可
 
