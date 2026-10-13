@@ -2,7 +2,9 @@
 
 `.github/workflows/android-compatibility.yml` 在 GitHub 托管的 Ubuntu 24.04 上构建并安装测试 APK，分别检查 Android 8.0 / 11 / 16（API 26 / 30 / 36）。手动运行方式：仓库 → Actions → Android compatibility → Run workflow。源码更新和 Pull Request 也会触发。
 
-测试要求仓库已启用 Actions，允许固定提交的官方 GitHub Actions 和 `ReactiveCircus/android-emulator-runner`，运行器能访问 Google Android SDK 下载地址并使用 `/dev/kvm`。不需要 API 密钥、GitHub Secrets 或发布签名。工作流只有读取源码的权限。
+测试要求仓库已启用 Actions，允许固定提交的官方 GitHub Actions、`android-actions/setup-android` 和 `ReactiveCircus/android-emulator-runner`，运行器能访问 Google Android SDK 下载地址并使用 `/dev/kvm`。不需要 API 密钥、GitHub Secrets 或发布签名。工作流只有读取源码的权限。
+
+工作流显式创建独立的 SDK 目录，并使用固定提交的 SDK 初始化 Action 安装 Google command-line tools 20.0（14742923）及构建包，将 `sdkmanager` / `avdmanager` / `adb` 加入 PATH。`ANDROID_HOME` 与 `ANDROID_SDK_ROOT` 设置为同一目录，直接构建器和模拟器 Action 共用它；不会依赖 Ubuntu 镜像碰巧预装或暴露 `sdkmanager`。路径和版本记录在 `sdk-environment.log`。
 
 构建直接使用 JDK 21 与官方 SDK 36 / Build Tools 36.0.0 的 AAPT2、javac、D8、zipalign、apksigner，不依赖当前 Gradle 插件下载。`minSdk`、`targetSdk` 和应用版本从工程文件读取；目前保持 API 26 / 37。使用 SDK 36 编译与面向 API 37 是明确的构建选择，并不作为闪退修复结论。
 
@@ -30,4 +32,4 @@ node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk local-ci
 
 Windows 可用 `python`，并通过 `--sdk` / `--java-home` 指定本地 SDK 与 JDK；脚本不会读取 `.build/android/debug.keystore`。模拟器结果只证明所测试系统镜像上的行为，仍需 realme GT7 / realme UI 7.0 真机验证 OEM 行为。
 
-工具依据：[Android D8](https://developer.android.com/tools/d8)、[AAPT2](https://developer.android.com/tools/aapt2)、[zipalign](https://developer.android.com/tools/zipalign)、[模拟器 Action 官方仓库](https://github.com/ReactiveCircus/android-emulator-runner)、[GitHub 固定 Action 提交的建议](https://docs.github.com/en/actions/reference/security/secure-use)。
+工具依据：[Android D8](https://developer.android.com/tools/d8)、[AAPT2](https://developer.android.com/tools/aapt2)、[zipalign](https://developer.android.com/tools/zipalign)、[SDK 初始化 Action 源码](https://github.com/android-actions/setup-android/blob/be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd/src/main.ts)、[模拟器 SDK 安装源码](https://github.com/ReactiveCircus/android-emulator-runner/blob/a421e43855164a8197daf9d8d40fe71c6996bb0d/src/sdk-installer.ts)、[GitHub 固定 Action 提交的建议](https://docs.github.com/en/actions/reference/security/secure-use)。

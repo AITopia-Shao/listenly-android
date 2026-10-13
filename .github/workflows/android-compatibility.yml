@@ -65,12 +65,36 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      - name: Install the official Android build tools
+      - name: Select one SDK directory for building and emulation
         shell: bash
         run: |
-          sdkmanager --licenses < <(yes) > /tmp/listenly-sdk-licenses.log
-          sdkmanager --install 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          task_sdk="$RUNNER_TEMP/listenly-android-sdk"
+          mkdir -p "$task_sdk"
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$task_sdk" "$task_sdk" >> "$GITHUB_ENV"
+      - name: Install SDK command-line tools and Android build packages
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4, verified 2026-10-13
+        with:
+          cmdline-tools-version: '14742923' # Google command-line tools 20.0; also used by emulator-runner
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+      - name: Verify the shared SDK and tool paths
+        shell: bash
+        run: |
+          test "$ANDROID_HOME" = "$ANDROID_SDK_ROOT"
+          test "$(command -v sdkmanager)" = "$ANDROID_HOME/cmdline-tools/20.0/bin/sdkmanager"
+          test -x "$ANDROID_HOME/cmdline-tools/20.0/bin/avdmanager"
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -f "$ANDROID_HOME/build-tools/36.0.0/lib/d8.jar"
+          mkdir -p .build/ci
+          {
+            printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$ANDROID_HOME" "$ANDROID_SDK_ROOT"
+            command -v sdkmanager
+            command -v avdmanager
+            command -v adb
+            sdkmanager --version
+            adb version
+          } | tee .build/ci/sdk-environment.log
       - name: Test source logic
         run: node --test tests/alignment.test.mjs tests/importer.test.mjs
       - name: Build the frontend for older Android WebView
@@ -109,6 +133,7 @@ jobs:
             dist/listenly-ci-fixture.apk
             .build/ci/build.json
             .build/ci/build.log
+            .build/ci/sdk-environment.log
             .build/runtime-results/api-${{ matrix.api }}/
           include-hidden-files: true
           if-no-files-found: warn

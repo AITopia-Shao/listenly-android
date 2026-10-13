@@ -54,7 +54,7 @@ try{
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
  // Browser user-gesture requirements are satisfied through CDP Input, not JS autoplay bypass.
- const play=await evaluate('(()=>{var r=document.querySelector("[data-action=play]").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()');
+ const play=await evaluate('(()=>{var r=document.querySelector("[data-action=play]").getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()');
  await rpc('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:play.x,y:play.y}]});
  await rpc('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
  await wait(1500);
