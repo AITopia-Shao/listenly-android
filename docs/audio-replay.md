@@ -55,4 +55,18 @@ node tools/android-replay-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk a
 
 本地 Android 16 / Chromium 133 的实际六级轻量包三轮回归全部通过，共 16 个场景（含原创示例句循环）及 8 个精确范围检查，已有答案与导入清单保持一致。修复包 SHA-256 为 `13734bb1fe4240f6e11a4344dbc0ab995a4547626c11a06b859f25093ae29d18`。第一次运行因 Android `uiautomator` 进程异常未能进入测试，不计为通过；保留故障记录后，加入有上限的框架重试并完成上述回归。
 
-本次云端结果在运行完成后记录。云端只使用原创合成音和原创英语示例；真实六级录音、题目和本地签名不上传。realme GT7 未直接测试新版，模拟器检查不保证所有 OEM 行为。
+[本次 GitHub Actions](https://github.com/AITopia-Shao/listenly-android/actions/runs/38519217979) 的四项任务全部通过：Android 8 / API 26、Android 11 / API 30、Android 16 / API 36，以及原创示例浏览器回归。发布标签 `v1.0.4` 对应提交 `940fe6eccf714b18604da0b8ff8dfc27e0898fcc`，包含每台模拟器三轮重复播放和两轮精确范围校验。
+
+已下载并核对 Actions 结果文件。各系统均通过 15 个真实播放场景及 8 项音频范围长度／哈希检查，答案与导入清单一致，应用进程保持稳定：
+
+| 系统 | WebView Chromium | 结果 |
+| --- | --- | --- |
+| Android 8 / API 26 | 69.0.3497.100 | 15 场景 + 8 范围检查通过 |
+| Android 11 / API 30 | 83.0.4103.106 | 同上 |
+| Android 16 / API 36 | 133.0.6943.137 | 同上 |
+
+云端浏览器另通过 62 个重复播放状态与 18 组阅读布局检查；实际构建入口哈希与本地最终安装包一致。公开 APK 已完成匿名下载，文件大小与 SHA-256 均匹配本地已测试的原创示例包。
+
+首次云端运行的 Android 8 在进入播放检查前，因系统拒绝 `logcat -c` 而中断；启动和原有单次播放检查成功。修正采集脚本后，不能清理的日志保留并记录限制，全部实际播放与字节断言仍必须通过。上述成功链接对应修正后的完整新运行。
+
+云端只使用原创合成音和原创英语示例；真实六级录音、题目和本地签名不上传。公开 [1.0.4 Release](https://github.com/AITopia-Shao/listenly-android/releases/tag/v1.0.4) 的原创示例 APK 为 `bc28a5f847fd8219a873411502dc490273d7b85b2ca8f5a63f6b0c8592fd8429`。realme GT7 未直接测试新版，模拟器检查不保证所有 OEM 行为。
