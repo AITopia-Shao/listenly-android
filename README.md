@@ -8,6 +8,14 @@
 | --- | --- | --- |
 | ![首页](docs/screenshots/home.png) | ![精听](docs/screenshots/intensive.png) | ![做题](docs/screenshots/quiz.png) |
 
+## 1.0.7 的套卷目录与完成统计
+
+资料库改为套卷／文章二级目录，选择套卷后首页陈列该套文章；点击首页其他文章的播放按钮立即更新置顶。材料标题去掉末尾题号范围，年份和材料筛选采用无外部焦点框的文字菜单，日历右侧描边完整显示。
+
+今日完成按整篇统计，全部题目提交才计数；最近练习只显示做完整篇的文章并去掉分钟后缀，个人页重复导入入口移除。听力分钟在完整覆盖文章后按实际播放日期入账，跳到结尾不计，原累计学习时长保留。历史迁移及验证口径见 [套卷与整篇完成验收](docs/papers-and-completion.md)。
+
+[1.0.7 安装包](https://github.com/AITopia-Shao/listenly-android/releases/tag/v1.0.7) 已发布，[Android 8 / 11 / 16 与浏览器回归](https://github.com/AITopia-Shao/listenly-android/actions/runs/38567587075) 首次运行全部通过。
+
 ## 1.0.6 的交互打磨
 
 应用图标改为黑底白色波形，夜间页面与原生背景统一调黑；日历移除冗余标题与“少／多”文字。正文显示控件顺序改为隐藏／原文／双语，并保留默认隐藏与阅读位置。
