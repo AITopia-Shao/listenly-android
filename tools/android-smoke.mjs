@@ -97,7 +97,7 @@ try{
  await wait(900);
  result.darkHome=await evaluate('({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color,playing:!document.querySelector("#audio").paused,time:document.querySelector("#audio").currentTime})');
  assert.ok(result.darkHome.playing&&result.darkHome.time>result.homePlayback.time+.2,'Changing appearance preserves actual home playback');
- assert.equal(result.darkHome.background,'rgb(23, 23, 23)','Night mode uses the dark background');
+ assert.equal(result.darkHome.background,'rgb(0, 0, 0)','Night mode uses the requested pure-black background');
  await writeFile(path.join(root,'home-dark.png'),run(['exec-out','screencap','-p'],true));
  await tapControl('.focus-card [data-action=home-play]');await poll('document.querySelector("#audio").paused');
  await evaluate('window.__appearanceReloadProbe=true');await rpc('Page.reload');
@@ -116,6 +116,7 @@ try{
   await evaluate(`document.querySelector('[data-action=nav][data-route=library]').click();document.querySelector('[data-action=open][data-paper="${paper.id}"][data-article="${article.id}"]').click()`);
  }else await evaluate(publicDemo?'document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click();document.querySelector("[data-action=mode][data-mode=intensive]").click()':'document.querySelector(".focus-card [data-action=open]").click()');
  assert.ok(await evaluate('!!document.querySelector("[data-mode=intensive][aria-pressed=true]")&&!!document.querySelector("[data-display=hidden][aria-pressed=true]")'),'Opening the reader defaults to intensive and hidden');
+ assert.deepEqual(await evaluate('[...document.querySelectorAll(".display-controls [data-action=display]")].map(b=>b.dataset.display)'),['hidden','original','bilingual'],'Native text choices are ordered hidden, original, bilingual');
  const bookmarkSnapshot=()=>evaluate('(()=>{var b=document.querySelector("[data-action=bookmark]");return {pressed:b.getAttribute("aria-pressed"),background:getComputedStyle(b).backgroundColor,fill:getComputedStyle(b.querySelector("svg path")).fill}})()');
  result.bookmarkBefore=await bookmarkSnapshot();
  await tapControl('[data-action=bookmark]');await wait(220);result.bookmarkToggled=await bookmarkSnapshot();
@@ -158,6 +159,24 @@ try{
  }
  assert.equal(result.playback.paused,false,'Native WebView audio plays after a touch');
  assert.ok(result.playback.time>0,'Native audio playback progresses');
+ result.speedBefore=await evaluate('document.querySelector("#audio").playbackRate');
+ await evaluate('window.__speedAudio=document.querySelector("#audio");window.__speedReader=document.querySelector(".main-panel")');
+ result.speedMenuTap=await tapControl('[data-action=speed]');
+ await poll('document.querySelector(".speed-popover")&&document.querySelector("[data-action=speed]").getAttribute("aria-expanded")==="true"');
+ assert.equal(await evaluate('document.querySelector("#audio").playbackRate'),result.speedBefore,'Opening the native speed menu keeps the current rate');
+ assert.deepEqual(await evaluate('[...document.querySelectorAll(".speed-popover [role=menuitemradio]")].map(b=>Number(b.dataset.speed))'),[.75,1,1.25,1.5],'Native popup has explicit playback rate choices');
+ result.speedChoiceTap=await tapControl('.speed-popover [data-action=set-speed][data-speed="1.25"]');
+ result.speedPlayback=await poll('(()=>{var a=document.querySelector("#audio");return !document.querySelector(".speed-popover")&&!a.paused&&a.playbackRate===1.25&&!a.error?{time:a.currentTime,rate:a.playbackRate}:null})()');
+ assert.ok(result.speedPlayback.time>result.playback.time,'Playback continues while the native menu changes speed');
+ assert.ok(await evaluate('window.__speedAudio===document.querySelector("#audio")&&window.__speedReader===document.querySelector(".main-panel")'),'Native speed adjustment retains the existing audio and reader');
+ assert.equal(await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).speed'),1.25,'Native speed selection is saved');
+ await tapControl('[data-action=speed]');
+ run(['shell','input','keyevent','4']);
+ await poll('!document.querySelector(".speed-popover")&&document.querySelector(".practice-header")');
+ assert.equal(await evaluate('document.querySelector("#audio").playbackRate'),1.25,'Android back dismisses the popup without changing rate or leaving the reader');
+ await tapControl('[data-action=speed]');
+ await tapControl(`.speed-popover [data-action=set-speed][data-speed="${result.speedBefore}"]`);
+ await poll(`!document.querySelector(".speed-popover")&&document.querySelector("#audio").playbackRate===${result.speedBefore}`);
  if(publicDemo){
   await tapPlay();
   result.pause=await poll('(()=>{var a=document.querySelector("#audio");return a.paused?{paused:a.paused,time:a.currentTime}:null})()');

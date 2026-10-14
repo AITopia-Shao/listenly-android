@@ -42,11 +42,32 @@ async function checkDefaultReader(){
  assert.equal(await page.locator('[data-display="hidden"][aria-pressed="true"]').count(),1,'entering reader defaults to hidden text');
  assert.equal(await page.locator('.sentence').count(),0,'hidden default does not reveal text');
  assert.equal(await page.locator('.bottom-nav').count(),0,'reader keeps the compact audio dock');
+ assert.deepEqual(await page.locator('.display-controls [data-action="display"]').evaluateAll(buttons=>buttons.map(button=>button.dataset.display)),['hidden','original','bilingual'],'reader orders text display from hidden to original to bilingual');
 }
 async function bookmarkStyle(){return page.locator('[data-action="bookmark"]').evaluate(b=>{const css=getComputedStyle(b),svg=getComputedStyle(b.querySelector('svg path'));return {background:css.backgroundColor,shadow:css.boxShadow,outline:css.outlineStyle,fill:svg.fill,pressed:b.getAttribute('aria-pressed')}})}
 const numberStat=async name=>Number((await page.locator(`[data-stat="${name}"]`).innerText()).replace(/[^\d.]/g,''));
 async function day(date){return page.locator(`.calendar-day[data-date="${date}"]`).evaluate(b=>({date:b.dataset.date,count:Number(b.dataset.count),level:Number(b.dataset.level),background:getComputedStyle(b).backgroundColor,label:b.getAttribute('aria-label')||b.getAttribute('title')}))}
 async function submit(choice){await click(`[data-action="answer"][data-option="${choice}"]`);await click('[data-action="submit-answer"]');await page.locator('.feedback').waitFor()}
+async function speedMenu(buttonSelector='[data-action="speed"]'){
+ const control=page.locator(buttonSelector).first();
+ const rate=await page.locator('#audio').evaluate(a=>a.playbackRate);
+ await control.click();
+ const menu=page.getByRole('menu',{name:'播放速度'});await menu.waitFor();
+ assert.equal(await control.getAttribute('aria-expanded'),'true','the speed control reports its open menu');
+ assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),rate,'opening the speed menu does not change playback speed');
+ assert.deepEqual(await menu.locator('[role="menuitemradio"]').evaluateAll(buttons=>buttons.map(b=>Number(b.dataset.speed))),[.75,1,1.25,1.5],'speed is chosen from four labeled rates');
+ const selected=menu.locator('[aria-checked="true"]');assert.equal(await selected.count(),1,'one applied speed is marked');
+ assert.equal(Number(await selected.getAttribute('data-speed')),rate,'the speed check mark matches the actual audio rate');
+ return menu;
+}
+async function chooseSpeed(value){
+ await page.locator(`.speed-popover [data-action="set-speed"][data-speed="${value}"]`).click();
+ assert.equal(await page.locator('.speed-popover').count(),0,'a speed choice dismisses the menu');
+ assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),value,'the audio applies the chosen rate');
+ assert.equal((await saved()).speed,value,'the chosen rate is persisted');
+ assert.equal(await page.locator('[data-action="speed"]').first().getAttribute('aria-expanded'),'false','the speed control closes with its menu');
+ assert.match(await page.locator('[data-action="speed"]').first().innerText(),new RegExp(`^${String(value).replace('.','\\.')}\\s*×$`),'the displayed rate matches the selected rate');
+}
 try{
  await page.goto(url);await page.locator('.focus-card').waitFor();
  await checkOutsideReader('home');
@@ -66,7 +87,7 @@ try{
  await page.waitForFunction(time=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>time+.2&&!a.error},start.time);
  assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
  const darkHome=await page.evaluate(()=>({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color}));
- assert.ok(rgb(darkHome.background).every(n=>n<50),'dark theme has a near-black background');
+ assert.equal(darkHome.background,'rgb(0, 0, 0)','dark theme uses the requested pure-black page foundation');
  const darkInk=rgb(darkHome.color);assert.ok(darkInk[0]>darkInk[1]&&darkInk[1]>darkInk[2],'dark theme uses warm orange ink');
  await page.waitForTimeout(220); // Capture the selected theme after its 180 ms thumb transition.
  await page.screenshot({path:path.join(output,'home-dark.png'),fullPage:true});
@@ -92,6 +113,31 @@ try{
  pass('both themes persist on reload and use the requested palettes',{lightHome});
  await click('.focus-open[data-action="open"]');await checkDefaultReader();
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
+ const speedBefore=await page.locator('#audio').evaluate(a=>a.playbackRate);
+ await speedMenu();await page.keyboard.press('Escape');
+ assert.equal(await page.locator('.speed-popover').count(),0,'Escape dismisses the speed menu');
+ assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),speedBefore,'cancelling speed selection keeps the rate');
+ await speedMenu();await page.locator('.speed-shade').click({position:{x:4,y:4}});
+ assert.equal(await page.locator('.speed-popover').count(),0,'tapping outside dismisses speed selection');
+ assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),speedBefore,'outside dismissal keeps the applied playback rate');
+ await page.evaluate(()=>{window.__speedAudio=document.querySelector('#audio');window.__speedReader=document.querySelector('.main-panel')});
+ await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>.15&&!a.error});
+ const speedStart=await audioState();await speedMenu();await chooseSpeed(1.25);
+ assert.ok(await page.evaluate(()=>window.__speedAudio===document.querySelector('#audio')&&window.__speedReader===document.querySelector('.main-panel')),'changing speed keeps audio and reading nodes intact');
+ await page.waitForFunction(time=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>time+.2&&a.playbackRate===1.25&&!a.error},speedStart.time);
+ await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').paused);
+ for(const viewport of [{width:360,height:800},{width:393,height:873},{width:430,height:932}]){
+  await page.setViewportSize(viewport);await speedMenu();
+  const bounds=await page.locator('.speed-popover').boundingBox();
+  assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=viewport.width&&bounds.y+bounds.height<=viewport.height,'anchored speed menu stays inside the phone viewport');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'speed menu creates no horizontal page overflow');
+  await page.keyboard.press('Escape');
+ }
+ await page.setViewportSize({width:393,height:873});
+ await page.emulateMedia({reducedMotion:'reduce'});await speedMenu();
+ assert.equal(await page.locator('.speed-popover').evaluate(e=>e.getAnimations({subtree:true}).length),0,'reduced motion disables popup animation');
+ await page.keyboard.press('Escape');await page.emulateMedia({reducedMotion:'no-preference'});
+ pass('explicit speed selection preserves playback, cancellation, reading position and phone layout',{speedBefore,chosenRate:1.25});
  const before=await bookmarkStyle();assert.equal(before.pressed,'false');assert.equal(before.fill,'none');
  await click('[data-action="bookmark"]');await page.waitForTimeout(220);
  const collected=await bookmarkStyle();assert.equal(collected.pressed,'true');assert.notEqual(collected.fill,'none','collected bookmark is filled');assert.equal(collected.background,before.background,'collecting does not darken a rectangle');
@@ -117,6 +163,17 @@ try{
  await click('[data-action="nav"][data-route="library"]');await checkOutsideReader('library');
  await click('[data-action="nav"][data-route="profile"]');await checkOutsideReader('profile');
  assert.doesNotMatch(await page.locator('#app').innerText(),/学习天数/);
+ assert.doesNotMatch(await page.locator('.activity-card').innerText(),/做题活跃度|过去一年|(?:^|\s)[少多](?:\s|$)/,'calendar omits visible decorative headings and legend prose');
+ assert.ok(await page.locator('.activity-card').getAttribute('aria-label'),'calendar retains an accessible name');
+ assert.ok(await page.locator('.activity-legend').getAttribute('aria-label'),'calendar color key retains an accessible description');
+ await speedMenu('#pref-speed');await page.keyboard.press('Escape');
+ assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),1.25,'profile shares the reader speed');
+ await speedMenu('#pref-speed');await chooseSpeed(.75);
+ await page.reload();await page.locator('.focus-card').waitFor();
+ await click('[data-action="nav"][data-route="profile"]');
+ assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),.75,'saved speed is applied after reload');
+ await speedMenu('#pref-speed');await chooseSpeed(1);
+ pass('profile uses the same explicit speed control and the selected rate survives reload');
  assert.equal(await numberStat('today-listening-minutes'),3,'listening minutes count today instead of all past days');
  assert.equal(await numberStat('today-questions'),3,'question count includes today only');
  assert.ok(Math.abs(await numberStat('total-study-hours')-2)<.05,'total study hours include listening and silent practice across all dates');

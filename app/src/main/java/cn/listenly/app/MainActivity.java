@@ -95,7 +95,7 @@ public final class MainActivity extends Activity {
         webView = null;
         try {
         webView = new WebView(this);
-        webView.setBackgroundColor(darkTheme ? Color.rgb(23, 23, 23) : Color.rgb(250, 250, 250));
+        webView.setBackgroundColor(darkTheme ? Color.BLACK : Color.rgb(250, 250, 250));
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -295,7 +295,7 @@ public final class MainActivity extends Activity {
                     View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
                     (darkTheme ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR));
         }
-        getWindow().getDecorView().setBackgroundColor(darkTheme ? Color.rgb(23, 23, 23) : Color.rgb(250, 250, 250));
+        getWindow().getDecorView().setBackgroundColor(darkTheme ? Color.BLACK : Color.rgb(250, 250, 250));
     }
 
     private void pushInsets() {
@@ -333,7 +333,7 @@ public final class MainActivity extends Activity {
                 darkTheme = "dark".equals(theme);
                 getSharedPreferences("listenly.preferences", MODE_PRIVATE).edit().putString("theme", theme).apply();
                 configureWindowSafely();
-                if (webView != null) webView.setBackgroundColor(darkTheme ? Color.rgb(23, 23, 23) : Color.rgb(250, 250, 250));
+                if (webView != null) webView.setBackgroundColor(darkTheme ? Color.BLACK : Color.rgb(250, 250, 250));
             });
         }
 

@@ -20,6 +20,7 @@ export async function verifyReaderLayout(page,artifactRoot){
    document.documentElement.style.setProperty('--safe-bottom',`${safeBottom}px`);
   },size);
   await page.locator('[data-action="mode"][data-mode="intensive"]').click();
+  assert.deepEqual(await page.locator('.display-controls [data-action="display"]').evaluateAll(buttons=>buttons.map(button=>button.dataset.display)),['hidden','original','bilingual'],'text display choices follow the reading order: hidden, original, bilingual');
   for(const display of ['original','bilingual']){
    await page.locator(`.display-controls [data-action="display"][data-display="${display}"]`).click();
    await page.locator('.transcript-card').waitFor();
@@ -103,9 +104,18 @@ export async function verifyCompactPlayerControls(page){
  assert.ok(Math.abs(await page.locator('#audio').evaluate(audio=>audio.currentTime)-12)<.2,'forward button moves five seconds');
  const rate=await page.locator('#audio').evaluate(audio=>audio.playbackRate);
  await page.locator('[data-action="speed"]').click();
- assert.notEqual(await page.locator('#audio').evaluate(audio=>audio.playbackRate),rate,'speed button changes the actual audio rate');
- for(let i=0;i<3;i++)await page.locator('[data-action="speed"]').click();
- assert.equal(await page.locator('#audio').evaluate(audio=>audio.playbackRate),rate,'speed cycle preserves all four rates');
+ assert.equal(await page.locator('#audio').evaluate(audio=>audio.playbackRate),rate,'opening the speed menu keeps the actual audio rate');
+ const choices=page.locator('.speed-popover [data-action="set-speed"]');
+ assert.deepEqual(await choices.evaluateAll(buttons=>buttons.map(button=>Number(button.dataset.speed))),[.75,1,1.25,1.5],'the menu offers the four explicit playback rates');
+ await page.keyboard.press('Escape');
+ assert.equal(await page.locator('.speed-popover').count(),0,'Escape cancels speed adjustment');
+ for(const speed of [.75,1,1.25,1.5,rate]){
+  await page.locator('[data-action="speed"]').click();
+  await page.locator(`.speed-popover [data-action="set-speed"][data-speed="${speed}"]`).click();
+  assert.equal(await page.locator('#audio').evaluate(audio=>audio.playbackRate),speed,'explicit speed selection updates the decoded recording');
+  assert.equal(await page.locator('[data-action="speed"]').getAttribute('aria-expanded'),'false','selecting a speed dismisses its menu');
+  assert.match(await page.locator('[data-action="speed"]').innerText(),new RegExp(`^${String(speed).replace('.','\\.')}\\s*×$`),'the speed control displays the applied value');
+ }
  await page.locator('.sentence').first().click();
  assert.equal(await page.locator('#audio').evaluate(audio=>audio.paused),false,'a sentence still starts audio');
  await page.locator('[data-action="play"]').click();
@@ -151,6 +161,13 @@ export async function verifyReaderScrollAndArticleMenu(page){
  const original=await visibleSentence(page);
  assert.equal(original.index,before.index,'showing original text retains the visible sentence');
  assert.ok(Math.abs(original.offset-before.offset)<2,'showing original text retains the reading offset');
+ for(const display of ['bilingual','original','bilingual','original']){
+  await page.locator(`.display-controls [data-action="display"][data-display="${display}"]`).click();
+  const current=await visibleSentence(page);
+  assert.equal(current.index,before.index,'rapid display reversals preserve the reading sentence');
+  assert.ok(Math.abs(current.offset-before.offset)<2,'rapid display reversals preserve the reading offset');
+  assert.equal(await page.locator('.display-controls').getAttribute('data-current'),display,'the text indicator follows the latest display choice');
+ }
  await page.locator('.display-controls [data-action="display"][data-display="hidden"]').click();
  await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();
  const restored=await visibleSentence(page);
