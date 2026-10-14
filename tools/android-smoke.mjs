@@ -76,7 +76,7 @@ try{
  const evaluate=async expression=>{const response=await rpc('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(response.exceptionDetails)throw new Error(JSON.stringify(response.exceptionDetails));return response.result.value};
  const poll=async expression=>{for(let i=0;i<30;i++){const value=await evaluate(expression);if(value)return value;await wait(500)}throw new Error(`UI readiness failed: ${expression}`)};
  result.home=await poll('document.querySelector(".focus-card") && document.body.innerText');
- assert.ok(result.home.includes('拾听'));
+ assert.ok(await evaluate('!!document.querySelector(".focus-card [data-action=open],.focus-card [data-action=import]")'),'Homepage has an actionable listening material entry');
  result.webview=await evaluate('navigator.userAgent');
  result.viewport=await evaluate('({width:innerWidth,height:innerHeight,contentWidth:document.documentElement.scrollWidth})');
  assert.ok(result.viewport.contentWidth<=result.viewport.width+1,'Mobile page fits the viewport');
@@ -85,17 +85,31 @@ try{
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
  if(publicDemo)assert.ok(result.audio.source.endsWith('/media/morning.wav'),'The original public demo recording is served');
+ {
+  result.practiceGeometry=await evaluate('(()=>{var player=document.querySelector(".playback-card").getBoundingClientRect(),text=document.querySelector(".main-panel").getBoundingClientRect(),css=getComputedStyle(document.documentElement);var rect=r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height});return {width:innerWidth,height:innerHeight,safeTop:parseFloat(css.getPropertyValue("--safe-top"))||0,safeBottom:parseFloat(css.getPropertyValue("--safe-bottom"))||0,contentWidth:document.documentElement.scrollWidth,navCount:document.querySelectorAll(".bottom-nav").length,player:rect(player),text:rect(text),controls:[...document.querySelectorAll(".player-buttons button")].map(b=>({action:b.dataset.action,...rect(b.getBoundingClientRect())}))}})()');
+  const geometry=result.practiceGeometry;
+  const availableHeight=geometry.height-geometry.safeTop-geometry.safeBottom;
+  assert.equal(geometry.navCount,0,'Practice replaces bottom navigation with the audio player');
+  assert.ok(geometry.contentWidth<=geometry.width+1,'Practice fits the native viewport horizontally');
+  assert.ok(geometry.player.bottom<=geometry.height+1&&geometry.player.left>=-1&&geometry.player.right<=geometry.width+1,'Compact player fits the native viewport');
+  assert.ok(geometry.text.bottom<=geometry.player.top+1,'Article text stays above the fixed player');
+  assert.ok(geometry.player.height-geometry.safeBottom<=110,'The audio player uses a compact row below the progress bar');
+  if(geometry.width>=360&&geometry.height>=700&&geometry.height>geometry.width)assert.ok(geometry.text.height>=availableHeight*.6,'Article text receives at least 60 percent of the available portrait screen');
+  for(const control of geometry.controls)assert.ok(control.left>=geometry.player.left-1&&control.right<=geometry.player.right+1&&control.top>=geometry.player.top-1&&control.bottom<=geometry.player.bottom+1,'Player touch targets fit inside the dock');
+  await writeFile(path.join(root,'practice.png'),run(['exec-out','screencap','-p'],true));
+ }
  if(publicDemo){
   result.playbackStart=await evaluate('(()=>{var a=document.querySelector("#audio");a.pause();a.currentTime=0;return a.currentTime})()');
   assert.equal(result.playbackStart,0,'Original demo starts at zero so playback progression is measurable');
  }
  // Use an Android input event so WebView receives the same gesture as a real screen tap.
- const tapPlay=async()=>{
-  await evaluate('document.querySelector("[data-action=play]").scrollIntoView({block:"center"})');
-  result.tap=await evaluate('(()=>{var b=document.querySelector("[data-action=play]"),r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return {x:x,y:y,scale:devicePixelRatio,hit:document.elementFromPoint(x,y).closest("[data-action=play]")===b}})()');
-  assert.ok(result.tap.hit,'Visible touch target is the play button');
-  run(['shell','input','tap',String(Math.round(result.tap.x*result.tap.scale)),String(Math.round(result.tap.y*result.tap.scale))]);
+ const tapControl=async selector=>{
+  const tap=await evaluate(`(()=>{var selector=${JSON.stringify(selector)},b=document.querySelector(selector),r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return {x:x,y:y,scale:devicePixelRatio,visible:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,hit:hit&&hit.closest(selector)===b}})()`);
+  assert.ok(tap.visible&&tap.hit,`Visible native touch target: ${selector}`);
+  run(['shell','input','tap',String(Math.round(tap.x*tap.scale)),String(Math.round(tap.y*tap.scale))]);
+  return tap;
  };
+ const tapPlay=async()=>{result.tap=await tapControl('[data-action=play]')};
  const playing='(()=>{var a=document.querySelector("#audio");return !a.paused&&a.currentTime>0?{paused:a.paused,time:a.currentTime}:null})()';
  await tapPlay();
  try{result.playback=await poll(playing)}catch(error){
@@ -105,21 +119,44 @@ try{
  }
  assert.equal(result.playback.paused,false,'Native WebView audio plays after a touch');
  assert.ok(result.playback.time>0,'Native audio playback progresses');
- await evaluate('document.querySelector("#audio").pause();document.querySelector("#audio").currentTime=10;document.querySelector("[data-action=mode][data-mode=exam]").click()');
+ if(publicDemo){
+  await tapPlay();
+  result.pause=await poll('(()=>{var a=document.querySelector("#audio");return a.paused?{paused:a.paused,time:a.currentTime}:null})()');
+  assert.equal(result.pause.paused,true,'Compact player pauses after a second native touch');
+ }
+ await evaluate('document.querySelector("#audio").pause();document.querySelector("#audio").currentTime=10');
+ if(publicDemo){
+  result.seekForwardTap=await tapControl('[data-action=seek-relative][data-seconds="5"]');
+  result.seekForward=await poll('Math.abs(document.querySelector("#audio").currentTime-15)<.5&&document.querySelector("#audio").currentTime');
+  result.seekBackwardTap=await tapControl('[data-action=seek-relative][data-seconds="-5"]');
+  result.seekBackward=await poll('Math.abs(document.querySelector("#audio").currentTime-10)<.5&&document.querySelector("#audio").currentTime');
+ }
+ await evaluate('document.querySelector("[data-action=mode][data-mode=exam]").click()');
  await poll('document.querySelector(".quiz-card") && document.querySelector("#audio").readyState >= 1');
  result.modeTime=await evaluate('document.querySelector("#audio").currentTime');
  assert.ok(Math.abs(result.modeTime-10)<.5,'Native playback timeline preserved when changing mode');
- if(publicDemo)await evaluate('document.querySelector(\'[data-action=question][data-index="0"]\').click()');
- await evaluate(publicDemo?'document.querySelector("[data-action=answer][data-option=B]").click();document.querySelector("[data-action=submit-answer]").click()':'document.querySelector("[data-action=answer]").click();document.querySelector("[data-action=submit-answer]").click()');
+ if(publicDemo){
+  result.answersBeforeInteraction=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
+  const demo=JSON.parse(await readFile(path.resolve('examples/demo/demo.json'),'utf8'));
+  const qs=demo.articles.find(article=>article.id==='morning').questions;
+  const index=qs.findIndex(question=>!result.answersBeforeInteraction[JSON.stringify(['listenly-original','morning',question.id])]?.submitted);
+  assert.ok(index>=0,'The project emulator has an unanswered original demo question for a real submission');
+  result.demoQuestion={index,id:qs[index].id,answer:qs[index].answer};
+  await evaluate(`document.querySelector('[data-action=question][data-index="${index}"]').click()`);
+  result.answerTap=await tapControl(`[data-action=answer][data-option="${qs[index].answer}"]`);
+  await poll('document.querySelector("[data-action=submit-answer]")&&!document.querySelector("[data-action=submit-answer]").disabled');
+  result.submitTap=await tapControl('[data-action=submit-answer]');
+ }else await evaluate('document.querySelector("[data-action=answer]").click();document.querySelector("[data-action=submit-answer]").click()');
  await poll('document.querySelector(".feedback")');
  if(publicDemo){
   result.feedback=await evaluate('document.querySelector(".feedback").innerText');
-  assert.ok(result.feedback.includes('答对了'),'Choosing original demo answer B grades correctly');
+  assert.ok(await evaluate(`!!document.querySelector('[data-action=answer][data-option="${result.demoQuestion.answer}"].correct')`),'The original demo correct answer is visibly graded');
  }
  result.answer=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
  if(publicDemo){
-  const answered=Object.entries(result.answer).filter(([key])=>{const [paper,article]=JSON.parse(key);return paper==='listenly-original'&&article==='morning'}).map(([,answer])=>answer);
-  assert.ok(answered.some(answer=>answer.choice==='B'&&answer.submitted),'The original demo answer B is saved');
+  const key=JSON.stringify(['listenly-original','morning',result.demoQuestion.id]);
+  assert.ok(result.answer[key]?.choice===result.demoQuestion.answer&&result.answer[key]?.submitted,'The newly submitted original demo answer is saved');
+  for(const [savedKey,savedAnswer] of Object.entries(result.answersBeforeInteraction))if(savedKey!==key)assert.deepEqual(result.answer[savedKey],savedAnswer,'Previously saved answers remain unchanged');
  }
  await evaluate('document.querySelector("[data-action=nav][data-route=home]").click()');
  await evaluate('window.__listenlyReloadProbe=true');

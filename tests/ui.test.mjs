@@ -3,6 +3,7 @@ import {mkdir,writeFile,copyFile,readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
+import {verifyReaderLayout,verifyCompactPlayerControls,verifyReaderScrollAndArticleMenu} from './reader-layout.test.mjs';
 
 let playwright;try{playwright=await import('playwright')}catch{playwright=await import(pathToFileURL(path.join(process.env.LOCALAPPDATA,'ms-playwright-go/1.57.0/package/index.mjs')).href)}
 const {chromium}=playwright;
@@ -19,11 +20,17 @@ const url=`http://127.0.0.1:${server.address().port}`;
 const click=selector=>page.locator(selector).first().click();
 try{
  await page.goto(url);await page.locator('.focus-card').waitFor();
+ assert.doesNotMatch(await page.locator('#app').innerText(),/每一句，都听懂|放慢一点，让英语慢慢清晰|每份材料，都是下一次进步的开始/,'home removes decorative slogans');
+ assert.equal(await page.locator('.brand').count(),0,'home has no oversized brand header');
  await page.screenshot({path:path.join(root,'dist/home-phone.png'),fullPage:true});
  // Open the original sample rather than depending on the bundled-paper order.
  await click('[data-action="nav"][data-route="library"]');
+ assert.doesNotMatch(await page.locator('#app').innerText(),/听力资料库|每份材料，都是下一次进步的开始/,'library removes redundant headings');
  await click('[data-action="open"][data-paper="listenly-original"][data-article="morning"]');
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
+ await verifyReaderLayout(page,path.join(root,'dist'));
+ await verifyCompactPlayerControls(page);
+ await verifyReaderScrollAndArticleMenu(page);
  assert.equal(await page.locator('.sentence .zh').count(),6);
  await click('[data-display="original"]');assert.equal(await page.locator('.sentence .zh').count(),0);
  await click('[data-display="hidden"]');assert.equal(await page.locator('.sentence').count(),0);
@@ -48,11 +55,11 @@ try{
  assert.match(await page.locator('.feedback').innerText(),/答对了/,'answer persists on restart');
  await click('[data-action="next-question"]');
  await click('[data-action="answer"][data-option="D"]');await click('[data-action="submit-answer"]');
- assert.match(await page.locator('.feedback').innerText(),/答案是 A/,'incorrect choice gets corrected');
+ assert.match(await page.locator('.feedback').innerText(),/答案\s*(?:是\s*)?A/,'incorrect choice gets corrected');
  await click('[data-action="next-question"]');
  await click('[data-action="answer"][data-option="C"]');await click('[data-action="submit-answer"]');
  await click('[data-action="next-question"]');
- assert.match(await page.locator('.result-card').innerText(),/本套材料已完成 3 \/ 5/);
+ assert.match(await page.locator('.result-card').innerText(),/本套(?:材料已)?完成\s+3\s*\/\s*5/);
  await click('.result-card [data-action="open"]');
  assert.match(await page.locator('.practice-title').innerText(),/little library/);
  assert.equal(await page.locator('.option.selected').count(),0,'same question ID in another article retains its own answer');
@@ -101,5 +108,5 @@ try{
  await page.setViewportSize({width:1280,height:900});await click('[data-action="nav"][data-route="home"]');
  await page.screenshot({path:path.join(root,'dist/home-desktop.png'),fullPage:true});
  assert.deepEqual(errors,[]);
- console.log('PASS: playback, bilingual/original/hidden, mode alignment, grading, persistence, real folder import, merged materials, 4 viewport widths.');
+ console.log('PASS: compact reader on 3 phone sizes with/without safe areas, one bottom player, seek/skip/speed/sentence loop, article menu, reading/quiz scroll preservation, bilingual/original/hidden, mode alignment, grading, persistence, real folder import, merged materials, 4 viewport widths.');
 }finally{await browser.close();server.close()}

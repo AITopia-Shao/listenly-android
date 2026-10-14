@@ -91,8 +91,16 @@ try {
     result.crashResponse = String(error.message);
   }
   socket.close();
-  await wait(4000);
-  const xml = await dumpUI('native-diagnostic');
+  // Crashpad must finish its dump before WebView reports the renderer exit.
+  // Read the native screen until the callback arrives rather than assuming 4 seconds.
+  let xml = '';
+  for (let i = 0; i < 12; i++) {
+    xml = await dumpUI('native-diagnostic');
+    result.diagnosticPolls = i + 1;
+    if (xml.includes('启动遇到问题')) break;
+    assert.ok(!xml.includes("isn't responding"), 'An ANR must not be dismissed by the recovery check');
+    await wait(1000);
+  }
   assert.ok(xml.includes('拾听 · 启动遇到问题'), 'Native recovery screen is displayed');
   assert.ok(xml.includes('页面运行进程已停止'), 'Recovery identifies the stopped renderer');
   assert.ok(xml.includes('didCrash=true'), 'The renderer actually crashed');
@@ -112,7 +120,7 @@ try {
     if (i === 29) throw new Error('Homepage did not recover after native retry');
   }
   result.homeAfterRetry = await after.evaluate('document.body.innerText');
-  assert.ok(result.homeAfterRetry.includes('拾听'), 'Retry creates a functioning WebView');
+  assert.ok(await after.evaluate('!!document.querySelector(".focus-card [data-action=open],.focus-card [data-action=import]")'), 'Retry creates a functioning WebView with an actionable listening material entry');
   result.answersAfter = await after.evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
   assert.deepEqual(result.answersAfter, result.answersBefore, 'Existing submitted answers survive the renderer crash and retry');
   result.pidAfterRetry = after.pid;

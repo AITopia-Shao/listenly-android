@@ -24,6 +24,7 @@ on:
       - examples/demo/**
       - tests/test_demo_assets.py
       - tests/ui.test.mjs
+      - tests/reader-layout.test.mjs
       - THIRD_PARTY_NOTICES.md
       - package.json
       - package-lock.json
@@ -50,6 +51,7 @@ on:
       - examples/demo/**
       - tests/test_demo_assets.py
       - tests/ui.test.mjs
+      - tests/reader-layout.test.mjs
       - THIRD_PARTY_NOTICES.md
       - package.json
       - package-lock.json
@@ -106,6 +108,7 @@ jobs:
             dist/listenly-demo-test.apk
             dist/*-phone.png
             dist/home-desktop.png
+            dist/reader-layout-results.json
             .build/demo/build.json
             .build/demo/build.log
           include-hidden-files: true
