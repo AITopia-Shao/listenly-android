@@ -40,7 +40,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -597,6 +596,7 @@ public final class MainActivity extends Activity {
                 if ("Range".equalsIgnoreCase(h.getKey())) range = h.getValue();
             }
             int status = 200; String reason = "OK"; long start = 0, end = length - 1;
+            boolean explicitRangeStart = false;
             if (range != null) {
                 try {
                     if (!range.startsWith("bytes=") || range.contains(",") || length <= 0) throw new IllegalArgumentException();
@@ -608,6 +608,7 @@ public final class MainActivity extends Activity {
                         start = Math.max(0, length - suffix);
                     } else {
                         start = Long.parseLong(limits[0]);
+                        explicitRangeStart = true;
                         if (!limits[1].isEmpty()) end = Math.min(Long.parseLong(limits[1]), length - 1);
                     }
                     if (start < 0 || start >= length || end < start) throw new IllegalArgumentException();
@@ -624,6 +625,9 @@ public final class MainActivity extends Activity {
             headers.put("Content-Length", Long.toString(responseLength));
             skipFully(stream, start);
             InputStream body = new LimitedStream(stream, responseLength);
+            if (status == 206 && explicitRangeStart) {
+                body = new WebViewRangeInputStream(body, start);
+            }
             if ("HEAD".equals(method)) { body.close(); body = new ByteArrayInputStream(new byte[0]); }
             String mime = mime(path);
             // Imported files are data: they must never become a page or a script
@@ -645,27 +649,6 @@ public final class MainActivity extends Activity {
             if (skipped == 0) { if (stream.read() == -1) throw new IOException("Unexpected end of file"); skipped = 1; }
             remaining -= skipped;
         }
-    }
-
-    private static final class LimitedStream extends FilterInputStream {
-        private long remaining;
-        LimitedStream(InputStream stream, long length) { super(stream); remaining = length; }
-        @Override public int read() throws IOException {
-            if (remaining <= 0) return -1;
-            int next = super.read(); if (next != -1) remaining--; return next;
-        }
-        @Override public int read(byte[] buffer, int offset, int count) throws IOException {
-            if (count == 0) return 0;
-            if (remaining <= 0) return -1;
-            int result = super.read(buffer, offset, (int) Math.min(count, remaining));
-            if (result > 0) remaining -= result;
-            return result;
-        }
-        @Override public long skip(long count) throws IOException {
-            if (count <= 0) return 0;
-            long skipped = super.skip(Math.min(count, remaining)); remaining -= skipped; return skipped;
-        }
-        @Override public int available() throws IOException { return (int) Math.min(super.available(), remaining); }
     }
 
     private static String mime(String path) {

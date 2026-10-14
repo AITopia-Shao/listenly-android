@@ -1,6 +1,6 @@
 {
   "name": "listenly-android",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -16,6 +16,7 @@
     "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs",
     "test:demo": "python -m unittest discover -s tests -p test_demo_assets.py",
     "test:ui": "node tests/ui.test.mjs --demo",
+    "test:replay": "node tests/audio-replay.test.mjs --demo",
     "test:materials": "python -m unittest discover -s tests -p test_*.py"
   },
   "devDependencies": {

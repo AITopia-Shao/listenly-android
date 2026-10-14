@@ -12,6 +12,10 @@ on:
       - app/src/main/assets/web/*.css
       - app/build.gradle
       - tools/android-smoke.mjs
+      - tools/android-replay-smoke.mjs
+      - tools/test-range-stream.py
+      - tests/java/**
+      - tests/audio-replay.test.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
       - tools/build-web-compat.mjs
@@ -39,6 +43,10 @@ on:
       - app/src/main/assets/web/*.css
       - app/build.gradle
       - tools/android-smoke.mjs
+      - tools/android-replay-smoke.mjs
+      - tools/test-range-stream.py
+      - tests/java/**
+      - tests/audio-replay.test.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
       - tools/build-web-compat.mjs
@@ -94,11 +102,13 @@ jobs:
           npm ci --no-audit --no-fund
           npm run prepare:demo
           python3 -m unittest discover -s tests -p 'test_*.py'
+          python3 tools/test-range-stream.py
           python3 tools/build-apk-ci.py --demo
       - name: Test playback, folder import and responsive layouts
         run: |
           npx playwright install --with-deps chromium
           npm run test:ui
+          npm run test:replay
       - name: Save the original demo test APK and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -111,6 +121,8 @@ jobs:
             dist/reader-layout-results.json
             .build/demo/build.json
             .build/demo/build.log
+            .build/range-stream-tests/result.json
+            .build/replay-browser/latest/result.json
           include-hidden-files: true
           retention-days: 14
 
@@ -181,7 +193,9 @@ jobs:
             adb version
           } | tee .build/ci/sdk-environment.log
       - name: Test source logic
-        run: node --test tests/alignment.test.mjs tests/importer.test.mjs
+        run: |
+          node --test tests/alignment.test.mjs tests/importer.test.mjs
+          python3 tools/test-range-stream.py
       - name: Build the frontend for older Android WebView
         run: |
           npm ci --no-audit --no-fund
@@ -203,6 +217,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2, verified 2026-10-13
         with:
           api-level: ${{ matrix.api }}
+          avd-name: Listenly_CI_API_${{ matrix.api }}
           target: ${{ matrix.api == 36 && 'default' || 'google_apis' }}
           arch: x86_64
           profile: pixel_7
@@ -215,7 +230,9 @@ jobs:
           pre-emulator-launch-script: |
             df -h "$ANDROID_HOME" "$ANDROID_AVD_HOME"
             test "$(df -Pk "$ANDROID_AVD_HOME" | awk 'NR==2 {print $4}')" -ge 8388608
-          script: node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}
+          script: |
+            node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}
+            node tools/android-replay-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}-replay --fixture
       - name: Save the APK and runtime evidence, including failed runs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -227,6 +244,8 @@ jobs:
             .build/ci/build.log
             .build/ci/sdk-environment.log
             .build/runtime-results/api-${{ matrix.api }}/
+            .build/runtime-results/api-${{ matrix.api }}-replay/
+            .build/range-stream-tests/result.json
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14

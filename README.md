@@ -8,6 +8,10 @@
 | --- | --- | --- |
 | ![首页](docs/screenshots/home.png) | ![精听](docs/screenshots/intensive.png) | ![做题](docs/screenshots/quiz.png) |
 
+## 1.0.4 的播放修复
+
+修复安卓 WebView 读取非零音频范围时二次跳过数据的问题，避免重开文章、切换材料或拖动进度后的解码失败；播放器出错后重新加载并保留位置，正常取消不再误报文件损坏，听完的文章重开从头播放。保留 1.0.3 的紧凑阅读布局。根因、旧包复现和验证范围见 [重复播放验收](docs/audio-replay.md)。
+
 ## 1.0.3 的界面调整
 
 删除顶部品牌图块、宣传语、重复页面标题与常驻说明。首页和资料库直接展示训练模式、材料、筛选与导入；精听和做题页使用完整屏高，底部音频条替换「听力 / 资料库 / 我的」导航，将空间留给正文或题目。
@@ -90,6 +94,8 @@ Windows 使用 `.\gradlew.bat assembleDebug`。Gradle 的 `preBuild` 自动构�
 npm test
 npm run test:demo
 npm run test:ui
+npm run test:replay
+python tools/test-range-stream.py --java-home "$JAVA_HOME"
 ```
 
 单元检查覆盖两种模式材料合并、ID 冲突、文件路径限制、字幕解析，以及切片与非连续时间线映射。GitHub Actions 在 Pixel 7 比例的 Android 8 / 11 / 16 模拟器上实际安装、启动、触摸播放、切换模式、作答并重新加载页面，保存日志、截图和结果文件。
