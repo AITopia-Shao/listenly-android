@@ -68,6 +68,7 @@ try{
  const darkHome=await page.evaluate(()=>({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color}));
  assert.ok(rgb(darkHome.background).every(n=>n<50),'dark theme has a near-black background');
  const darkInk=rgb(darkHome.color);assert.ok(darkInk[0]>darkInk[1]&&darkInk[1]>darkInk[2],'dark theme uses warm orange ink');
+ await page.waitForTimeout(220); // Capture the selected theme after its 180 ms thumb transition.
  await page.screenshot({path:path.join(output,'home-dark.png'),fullPage:true});
  await homePlay.click();await page.waitForFunction(()=>document.querySelector('#audio').paused);
  const paused=await audioState();await page.waitForTimeout(250);
@@ -139,6 +140,7 @@ try{
  await click('[data-action="theme"][data-theme="dark"]');
  const darkDay=await day(dateKeys.today),darkRgb=rgb(darkDay.background);assert.ok(darkRgb[0]>darkRgb[1]&&darkRgb[1]>darkRgb[2],'nighttime activity uses orange');
  assert.equal(darkDay.count,6,'changing palette retains the activity count');
+ await page.waitForTimeout(220);
  await page.screenshot({path:path.join(output,'profile-dark.png'),fullPage:true});
  pass('real submissions and repeated practice update activity; palettes use green/orange',{todayBefore,todayAfter,darkDay});
  for(const viewport of [{width:360,height:800},{width:393,height:873},{width:430,height:932}]){

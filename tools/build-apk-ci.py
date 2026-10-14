@@ -34,7 +34,7 @@ def build(args: argparse.Namespace) -> None:
     library = json.loads((staged / "assets" / "web" / "bundled-library.json").read_text(encoding="utf-8"))
     if library.get("papers") != []:
         raise ValueError("CI and public demo builds require an empty real-paper library")
-    allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "demo.json", "bundled-library.json")}
+    allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js", "demo.json", "bundled-library.json")}
     if args.demo:
         examples = ROOT / "examples" / "demo"
         original = json.loads((examples / "demo.json").read_text(encoding="utf-8-sig"))

@@ -17,7 +17,8 @@ const webRoot=path.resolve(arg('--web-root')||path.join(root,args.includes('--de
 const output=path.resolve(arg('--output')||path.join(root,'.build/replay-browser/latest'));
 await mkdir(output,{recursive:true});
 const entry=await readFile(path.join(webRoot,'app.compat.js'));
-const result={webRoot,entrySha256:createHash('sha256').update(entry).digest('hex'),browser:'',checks:[],pageErrors:[],requestFailures:[],mediaRequests:[],mediaEvents:[],passed:false};
+const result={webRoot,entrySha256:createHash('sha256').update(entry).digest('hex'),browser:'',checks:[],pageErrors:[],requestFailures:[],mediaRequests:[],mediaEvents:[],actionTrace:[],passed:false};
+let documentIndex=1;
 const browser=await playwright.chromium.launch({...(process.env.LISTENLY_BROWSER_CHANNEL?{channel:process.env.LISTENLY_BROWSER_CHANNEL}:(process.platform==='win32'?{channel:'msedge'}:{})),headless:true});
 const page=await browser.newPage({viewport:{width:412,height:915},deviceScaleFactor:1});
 page.on('pageerror',error=>result.pageErrors.push(error.message));
@@ -25,6 +26,19 @@ page.on('requestfailed',request=>result.requestFailures.push({url:request.url(),
 page.on('response',response=>{if(/\.(wav|m4a|mp3)(?:[?#]|$)/i.test(response.url()))result.mediaRequests.push({url:response.url(),status:response.status(),requestRange:response.request().headers().range||null,contentRange:response.headers()['content-range']||null})});
 await page.addInitScript(()=>{
   window.replayMediaEvents=[];
+  window.replayActionTrace=[];
+  const mediaState=()=>{const audio=document.querySelector('#audio');return {at:performance.now(),src:audio?.currentSrc,time:audio?.currentTime,paused:audio?.paused,ended:audio?.ended,seeking:audio?.seeking,readyState:audio?.readyState,networkState:audio?.networkState,error:audio?.error?{code:audio.error.code,message:audio.error.message}:null,playerLabel:document.querySelector('.big-play')?.getAttribute('aria-label'),visibility:document.visibilityState,focus:document.hasFocus()}};
+  for(const name of ['pointerdown','pointerup','click'])document.addEventListener(name,event=>{
+    const button=event.target instanceof Element?event.target.closest('[data-action]'):null;
+    if(button)window.replayActionTrace.push({kind:'pointer',name,...mediaState(),action:button.dataset.action,route:button.dataset.route,label:button.getAttribute('aria-label'),target:event.target.tagName,detail:event.detail});
+  },true);
+  for(const name of ['play','pause']){
+    const original=HTMLMediaElement.prototype[name];
+    HTMLMediaElement.prototype[name]=function(...args){
+      if(this.id==='audio')window.replayActionTrace.push({kind:'method',name,...mediaState(),stack:new Error().stack});
+      return original.apply(this,args);
+    };
+  }
   document.addEventListener('DOMContentLoaded',()=>{
     const audio=document.querySelector('#audio');
     for(const name of ['loadstart','loadedmetadata','canplay','play','playing','pause','seeking','seeked','ended','error','stalled','waiting','abort','emptied']){
@@ -198,6 +212,8 @@ try{
   await seek(1);await click('[data-action="mode"][data-mode="intensive"]');await metadata();assert.ok(Math.abs((await snapshot()).time-12.268)<.2);await play('Blob full recording after question clip');await pause();
   await open('listenly-original','library');await play('WAV switch away from Blob');await pause();await open('replay-import','article');await play('Blob return after another article');await pause();
   result.mediaEvents.push(...await page.evaluate(()=>window.replayMediaEvents.map(event=>({...event,document:1}))));
+  result.actionTrace.push(...await page.evaluate(()=>window.replayActionTrace.map(event=>({...event,document:1}))));
+  documentIndex=2;
   await page.reload();await page.locator('.focus-card').waitFor();await open('replay-import','article');assert.match((await snapshot()).src,/^blob:/);await play('Blob restored from IndexedDB after reload');await pause();await finishAndReplay('restored Blob',2);
   if(args.includes('--real')){
     const library=JSON.parse(await readFile(path.join(webRoot,'bundled-library.json'),'utf8'));
@@ -219,7 +235,8 @@ try{
   result.passed=true;console.log(JSON.stringify({passed:true,checks:result.checks.length,entrySha256:result.entrySha256,output}));
 }catch(error){result.failure={message:error.message,stack:error.stack};result.finalState=await snapshot().catch(()=>null);await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}
 finally{
-  result.mediaEvents.push(...await page.evaluate(()=>(window.replayMediaEvents||[]).map(event=>({...event,document:2}))).catch(()=>[]));
+  result.mediaEvents.push(...await page.evaluate(index=>(window.replayMediaEvents||[]).map(event=>({...event,document:index})),documentIndex).catch(()=>[]));
+  result.actionTrace.push(...await page.evaluate(index=>(window.replayActionTrace||[]).map(event=>({...event,document:index})),documentIndex).catch(()=>[]));
   await writeFile(path.join(output,'result.json'),JSON.stringify(result,null,2));
   await browser.close();await new Promise(resolve=>server.close(resolve));
 }
