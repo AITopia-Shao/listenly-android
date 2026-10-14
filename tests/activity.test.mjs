@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   localDateKey,normalizeActivity,recordQuestionSubmission,
   recordListeningSeconds,recordStudySeconds,activitySummary,
-  activityLevel,activityCalendar
+  activityLevel,activityCalendar,recordArticleCompletion,migrateArticleCompletions,
+  recordListeningCoverage,finishListeningArticle,resetListeningSession
 } from '../app/src/main/assets/web/activity.js';
 
 const originalTimeZone=process.env.TZ;
@@ -26,7 +27,7 @@ test('legacy date formats merge into one local day while all historical seconds 
   assert.equal(state.days['2026-02-28'],3600);
   assert.equal(state.days['unknown old day'],600);
   const summary=activitySummary(state,local(2026,10,14));
-  assert.equal(summary.listeningMinutes,10);
+  assert.equal(summary.listeningMinutes,0,'legacy elapsed time cannot prove complete playback');
   assert.equal(summary.totalListeningSeconds,4800);
   assert.equal(summary.studyHours,4800/3600);
   normalizeActivity(state,local(2026,10,14));
@@ -38,7 +39,7 @@ test('invalid dated legacy counters remain in lifetime totals without being attr
   const summary=activitySummary(state,local(2026,10,14));
   assert.equal(state.days['2026-02-30'],600);
   assert.equal(summary.totalSeconds,720);
-  assert.equal(summary.listeningMinutes,2);
+  assert.equal(summary.listeningMinutes,0);
 });
 
 test('legacy submitted answers migrate by their actual local timestamp only once',()=>{
@@ -59,7 +60,7 @@ test('legacy submitted answers migrate by their actual local timestamp only once
   normalizeActivity(state,local(2026,10,15));
   assert.equal(state.dailyQuestions['2026-10-14'].b,1);
   assert.equal(state.dailyQuestions['2026-10-14'].d,undefined,'unknown submission dates must not become today');
-  assert.equal(state.activityVersion,1);
+  assert.equal(state.activityVersion,2);
 });
 
 test('migration preserves pre-existing repeated question counts and normalizes ledger dates',()=>{
@@ -95,14 +96,14 @@ test('saved activity survives JSON reload without being inferred again from late
   assert.deepEqual(reloaded.answers,state.answers);
 });
 
-test('daily minutes and question totals reset by date while total study hours retain every day',()=>{
+test('only completed listening affects daily minutes while total study hours retain all actual study time',()=>{
   const state=makeState({days:{'2026-10-13':7200,'2026-10-14':125},studyDays:{'2026-10-13':3475,'2026-10-14':3600}});
   recordQuestionSubmission(state,'a',local(2026,10,13,9).getTime());
   recordQuestionSubmission(state,'b',local(2026,10,14,9).getTime());
   recordQuestionSubmission(state,'c',local(2026,10,14,10).getTime());
   const today=activitySummary(state,local(2026,10,14));
-  assert.equal(today.listeningSeconds,125);
-  assert.equal(today.listeningMinutes,2);
+  assert.equal(today.listeningSeconds,0);
+  assert.equal(today.listeningMinutes,0);
   assert.equal(today.completedQuestions,2);
   assert.equal(today.totalListeningSeconds,7325);
   assert.equal(today.totalStudySeconds,7075);
@@ -112,6 +113,170 @@ test('daily minutes and question totals reset by date while total study hours re
   assert.equal(tomorrow.listeningMinutes,0);
   assert.equal(tomorrow.completedQuestions,0);
   assert.equal(tomorrow.studyHours,4);
+});
+
+const article={id:'article',questions:[{id:'q1'},{id:'q2'},{id:'q3'}]};
+const articleKey=JSON.stringify(['paper','article']);
+function submit(state,id,at){
+  state.answers??={};
+  state.answers[JSON.stringify(['paper','article',id])]={choice:id==='q2'?'B':'A',submitted:true,at};
+}
+
+test('an article is counted immediately after every question is submitted, including wrong choices',()=>{
+  const state=makeState(),at=local(2026,10,14,8).getTime();
+  submit(state,'q1',at);
+  assert.equal(recordArticleCompletion(state,'paper',article,at),false);
+  submit(state,'q2',at+1000);
+  assert.equal(recordArticleCompletion(state,'paper',article,at+1000),false);
+  submit(state,'q3',at+2000);
+  assert.equal(recordArticleCompletion(state,'paper',article,at+2000),true);
+  assert.equal(activitySummary(state,at+2000).completedArticles,1);
+  assert.equal(state.articleCompletions[articleKey].last,at+2000);
+  assert.equal(recordArticleCompletion(state,'paper',article,at+3000),false,'result-page clicks cannot add another article');
+  assert.equal(recordArticleCompletion(state,'paper',{id:'empty',questions:[]},at),false);
+});
+
+test('a completed article remains in history while a complete redo counts once again',()=>{
+  const state=makeState(),first=local(2026,10,13,8).getTime(),second=local(2026,10,14,8).getTime();
+  for(const q of article.questions)submit(state,q.id,first);
+  assert.equal(recordArticleCompletion(state,'paper',article,first),true);
+  state.answers={};
+  submit(state,'q1',second);
+  assert.equal(recordArticleCompletion(state,'paper',article,second),false);
+  assert.equal(state.articleCompletions[articleKey].last,first,'partial redo must not enter recent practice');
+  submit(state,'q2',second+1000);submit(state,'q3',second+2000);
+  assert.equal(recordArticleCompletion(state,'paper',article,second+2000),true);
+  assert.equal(recordArticleCompletion(state,'paper',article,second+2000),false);
+  assert.equal(state.articleCompletions[articleKey].count,2);
+  assert.equal(activitySummary(state,first).completedArticles,1);
+  assert.equal(activitySummary(state,second).completedArticles,1);
+  const reloaded=makeState(JSON.parse(JSON.stringify(state)));
+  assert.equal(recordArticleCompletion(reloaded,'paper',article,second+3000),false);
+});
+
+test('legacy article migration requires every valid timestamp and uses the final submission day',()=>{
+  const state=makeState(),first=local(2026,10,13,23,59,59).getTime(),last=local(2026,10,14,0,0,1).getTime();
+  submit(state,'q1',first);submit(state,'q2',first);submit(state,'q3',last);
+  state.dailyArticles['2026-10-14']={[articleKey]:4};
+  const papers=[{id:'paper',articles:[article,{id:'unfinished',questions:[{id:'q1'}]},{id:'unknown-date',questions:[{id:'q1'}]}]}];
+  state.answers[JSON.stringify(['paper','unknown-date','q1'])]={choice:'A',submitted:true};
+  assert.equal(migrateArticleCompletions(state,papers),1);
+  assert.equal(migrateArticleCompletions(state,papers),0);
+  assert.equal(activitySummary(state,last).completedArticles,4,'existing exported counts survive migration');
+  assert.equal(activitySummary(state,first).completedArticles,0);
+  assert.equal(state.articleCompletions[articleKey].last,last);
+  assert.equal(Object.keys(state.articleCompletions).length,1);
+});
+
+test('partial listening stays out of daily minutes but remains in lifetime hours',()=>{
+  const state=makeState(),at=local(2026,10,14,8).getTime();
+  recordListeningSeconds(state,90,at);
+  recordListeningCoverage(state,articleKey,{from:0,to:90,duration:120,seconds:90,at});
+  assert.equal(finishListeningArticle(state,articleKey,120,at),false);
+  const summary=activitySummary(state,at);
+  assert.equal(summary.listeningMinutes,0);
+  assert.equal(summary.studyHours,90/3600);
+});
+
+test('continuous complete playback credits actual wall minutes once and supports full replay',()=>{
+  const state=makeState(),at=local(2026,10,14,8).getTime();
+  recordListeningCoverage(state,articleKey,{from:0,to:60,duration:120,seconds:40,at});
+  recordListeningCoverage(state,articleKey,{from:60,to:120,duration:120,seconds:40,at});
+  assert.equal(finishListeningArticle(state,articleKey,120,at),true);
+  assert.equal(activitySummary(state,at).listeningSeconds,80,'1.5× playback counts the real time spent listening');
+  assert.equal(activitySummary(state,at).listeningMinutes,1);
+  assert.equal(finishListeningArticle(state,articleKey,120,at),false);
+  assert.equal(recordListeningCoverage(state,articleKey,{from:100,to:120,duration:120,seconds:20,at}),false,'a completed session cannot accrue an extra tail');
+  recordListeningCoverage(state,articleKey,{from:0,to:120,duration:120,seconds:120,at});
+  assert.equal(finishListeningArticle(state,articleKey,120,at+1000),true);
+  assert.equal(activitySummary(state,at).listeningSeconds,200);
+});
+
+test('seek-to-end and skipped middle sections cannot be mistaken for a complete listen',()=>{
+  const state=makeState(),at=local(2026,10,14,8).getTime();
+  recordListeningCoverage(state,articleKey,{from:0,to:10,duration:120,seconds:10,at});
+  recordListeningCoverage(state,articleKey,{from:119,to:120,duration:120,seconds:1,at});
+  assert.equal(finishListeningArticle(state,articleKey,120,at),false);
+  resetListeningSession(state,articleKey,120);
+  recordListeningCoverage(state,articleKey,{from:0,to:59,duration:120,seconds:59,at});
+  recordListeningCoverage(state,articleKey,{from:61,to:120,duration:120,seconds:59,at});
+  assert.equal(finishListeningArticle(state,articleKey,120,at),false);
+  assert.equal(activitySummary(state,at).listeningMinutes,0);
+  recordListeningCoverage(state,articleKey,{from:59,to:61,duration:120,seconds:2,at});
+  assert.equal(finishListeningArticle(state,articleKey,120,at),true,'listening to the missing section completes coverage');
+});
+
+test('paused sessions and process reload preserve coverage without charging partial listening',()=>{
+  const state=makeState(),at=local(2026,10,14,8).getTime();
+  recordListeningCoverage(state,articleKey,{from:0,to:30,duration:60,seconds:30,at});
+  const reloaded=makeState(JSON.parse(JSON.stringify(state)));
+  assert.equal(activitySummary(reloaded,at).listeningMinutes,0);
+  recordListeningCoverage(reloaded,articleKey,{from:30,to:60,duration:60,seconds:30,at});
+  assert.equal(finishListeningArticle(reloaded,articleKey,60,at),true);
+  assert.equal(activitySummary(reloaded,at).listeningMinutes,1);
+  const finishedReload=makeState(JSON.parse(JSON.stringify(reloaded)));
+  assert.equal(finishListeningArticle(finishedReload,articleKey,60,at),false);
+});
+
+test('rounding tolerance is tiny, repeated intervals do not manufacture coverage, and changed audio resets it',()=>{
+  const state=makeState(),at=local(2026,10,14,8).getTime();
+  for(let i=0;i<10;i++)recordListeningCoverage(state,articleKey,{from:0,to:30,duration:60,seconds:30,at});
+  assert.equal(finishListeningArticle(state,articleKey,60,at),false);
+  recordListeningCoverage(state,articleKey,{from:30,to:59.9,duration:60,seconds:29.9,at});
+  assert.equal(finishListeningArticle(state,articleKey,60,at),true);
+  assert.equal(recordListeningCoverage(state,articleKey,{from:30,to:60,duration:100,seconds:30,at}),true);
+  assert.equal(finishListeningArticle(state,articleKey,100,at),false);
+  assert.deepEqual(state.listeningSessions[articleKey].ranges,[[30,60]]);
+  assert.equal(recordListeningCoverage(state,articleKey,{from:60,to:30,duration:100,seconds:30,at}),false);
+});
+
+test('complete playback releases minutes to actual local playback dates after crossing midnight',()=>{
+  const state=makeState(),at=local(2026,10,15,0,0,5).getTime();
+  recordListeningSeconds(state,120,at);
+  recordListeningCoverage(state,articleKey,{from:0,to:120,duration:120,seconds:120,at});
+  assert.equal(activitySummary(state,local(2026,10,14)).listeningSeconds,0,'neither day is credited before completion');
+  assert.equal(activitySummary(state,at).listeningSeconds,0);
+  assert.equal(finishListeningArticle(state,articleKey,120,at),true);
+  assert.equal(activitySummary(state,local(2026,10,14)).listeningSeconds,115);
+  assert.equal(activitySummary(state,local(2026,10,14)).listeningMinutes,1);
+  assert.equal(activitySummary(state,at).listeningSeconds,5);
+  assert.equal(activitySummary(state,at).listeningMinutes,0);
+  assert.equal(state.days['2026-10-14'],115,'lifetime elapsed counters retain their actual day split');
+});
+
+test('a paused cross-midnight session preserves pending dated seconds through JSON reload',()=>{
+  const state=makeState(),first=local(2026,10,14,23,59,50).getTime(),finish=local(2026,10,15,0,1).getTime();
+  recordListeningCoverage(state,articleKey,{from:0,to:60,duration:120,seconds:60,at:first});
+  const reloaded=makeState(JSON.parse(JSON.stringify(state)));
+  recordListeningCoverage(reloaded,articleKey,{from:60,to:120,duration:120,seconds:60,at:finish});
+  assert.equal(activitySummary(reloaded,first).listeningSeconds,0);
+  assert.equal(activitySummary(reloaded,finish).listeningSeconds,0);
+  assert.equal(finishListeningArticle(reloaded,articleKey,120,finish),true);
+  assert.equal(activitySummary(reloaded,first).listeningMinutes,1);
+  assert.equal(activitySummary(reloaded,finish).listeningMinutes,1);
+  assert.equal(finishListeningArticle(makeState(JSON.parse(JSON.stringify(reloaded))),articleKey,120,finish),false);
+});
+
+test('pending dated playback splitting respects daylight-saving local midnight',()=>{
+  process.env.TZ='America/New_York';
+  try{
+    const state=makeState(),start=local(2026,3,8),end=local(2026,3,9),seconds=(end-start)/1000;
+    recordListeningCoverage(state,articleKey,{from:0,to:seconds,duration:seconds,seconds,at:end.getTime()});
+    assert.equal(state.listeningSessions[articleKey].days['2026-03-08'],23*3600);
+    assert.equal(state.listeningSessions[articleKey].days['2026-03-09'],undefined);
+    assert.equal(finishListeningArticle(state,articleKey,seconds,end.getTime()),true);
+    assert.equal(activitySummary(state,start).listeningMinutes,23*60);
+    assert.equal(activitySummary(state,end).listeningMinutes,0);
+  }finally{process.env.TZ='Asia/Shanghai'}
+});
+
+test('an undated pre-release pending session credits only its unknown remainder on finish date',()=>{
+  const at=local(2026,10,15,8).getTime();
+  const state=makeState({listeningSessions:{[articleKey]:{duration:120,ranges:[[0,60]],seconds:60,completed:false}}});
+  recordListeningCoverage(state,articleKey,{from:60,to:120,duration:120,seconds:60,at});
+  assert.equal(finishListeningArticle(state,articleKey,120,at),true);
+  assert.equal(activitySummary(state,at).listeningSeconds,120);
+  assert.equal(activitySummary(state,local(2026,10,14)).listeningSeconds,0);
 });
 
 test('listening intervals crossing midnight split their actual seconds between the two days',()=>{

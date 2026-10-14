@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {openLibraryArticle} from './library-navigation.mjs';
 import {writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
@@ -148,7 +149,7 @@ export async function verifyReaderScrollAndArticleMenu(page){
   {path:'paper-layout-scroll/long/questions.json',text:JSON.stringify(questions)}
  ]}})),{transcript,questions});
  await page.locator('[data-action="nav"][data-route="library"]').click();
- await page.locator('[data-action="open"][data-paper="paper-layout-scroll"]').click();
+ await openLibraryArticle(page,'paper-layout-scroll','long');
  await page.locator('[data-action="mode"][data-mode="intensive"]').click();
  await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();
  await page.locator('.main-panel').evaluate(panel=>{
@@ -197,7 +198,7 @@ export async function verifyReaderScrollAndArticleMenu(page){
  await page.locator('[data-action="next-question"]').click();
  assert.equal(await page.locator('.main-panel').evaluate(panel=>panel.scrollTop),0,'a new question starts at its top');
  await page.locator('[data-action="nav"][data-route="library"]').click();
- await page.locator('[data-action="open"][data-paper="listenly-original"][data-article="morning"]').click();
+ await openLibraryArticle(page,'listenly-original','morning');
  await page.locator('[data-action="mode"][data-mode="intensive"]').click();
  await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();
 }

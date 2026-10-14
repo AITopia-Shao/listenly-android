@@ -4,6 +4,7 @@ import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
+import {openLibraryArticle} from './library-navigation.mjs';
 
 // All playback uses the actual app buttons and a real browser media pipeline.
 // Seeking to a recording's final second shortens the test without faking ended.
@@ -76,7 +77,7 @@ async function open(paper,article){
   await pause();
   if(await page.locator('[data-action="nav"][data-route="library"]').count())await click('[data-action="nav"][data-route="library"]');
   else{await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="library"]')}
-  await click(`[data-action="open"][data-paper="${paper}"][data-article="${article}"]`);
+  await openLibraryArticle(page,paper,article);
   if(await page.locator('[data-action="mode"][data-mode="intensive"][aria-pressed="false"]').count())await click('[data-action="mode"][data-mode="intensive"]');
   await metadata();
 }
@@ -119,7 +120,7 @@ async function transientReadFailure(){
     else await route.continue();
   });
   await click('[data-action="nav"][data-route="library"]');
-  await click('[data-action="open"][data-paper="listenly-original"][data-article="morning"]');
+  await openLibraryArticle(page,'listenly-original','morning');
   await page.waitForFunction(()=>Boolean(document.querySelector('#audio').error),{},{timeout:15000});
   const failed=await snapshot();
   result.transientReadFailure={purpose:'Fault recovery regression; does not reproduce or identify the GT7-specific cause',first,failed,failedRequests,savedAnswers:saved.answers,savedBookmarks:saved.bookmarks};
@@ -149,7 +150,7 @@ async function cancelPendingPlayback(){
     await route.continue().catch(()=>{});
   });
   await click('[data-action="nav"][data-route="library"]');
-  await click('[data-action="open"][data-paper="listenly-original"][data-article="morning"]');
+  await openLibraryArticle(page,'listenly-original','morning');
   await click('[data-action="play"]');
   await click('[data-action="nav"][data-route="home"]');
   await page.locator('.focus-card').waitFor();
@@ -202,9 +203,9 @@ try{
   await record('sentence loop crosses boundary and returns');await click('[data-action="loop"]');await pause();await play('ordinary play after sentence loop');await pause();
   await click('[data-action="mode"][data-mode="exam"]');await metadata();await play('WAV switch to exam');await pause();await click('[data-action="mode"][data-mode="intensive"]');await metadata();await play('WAV return from exam');await pause();
   const fixture=await createImportedFixture();await click('[data-action="nav"][data-route="library"]');await page.locator('#folder-input').setInputFiles(fixture);
-  await page.locator('[data-action="open"][data-paper="replay-import"]').waitFor();
+  await page.locator('[data-action="open-paper"][data-paper="replay-import"]').waitFor();
   if(await page.locator('[data-action="close-dialog"]').count())await click('[data-action="close-dialog"]');
-  await click('[data-action="open"][data-paper="replay-import"]');await metadata();assert.match((await snapshot()).src,/^blob:/);
+  await openLibraryArticle(page,'replay-import','article');await metadata();assert.match((await snapshot()).src,/^blob:/);
   await seek(0);await play('Blob first playback');await pause();await finishAndReplay('Blob full recording');
   await seek(12);await click('[data-action="mode"][data-mode="exam"]');await metadata();
   const clip=await snapshot();assert.match(clip.src,/^blob:/);assert.ok(clip.duration<12&&clip.duration>10,'question uses a genuine cut PCM recording');assert.ok(Math.abs(clip.time-(12-11.268))<.2,'clip preserves the article position');

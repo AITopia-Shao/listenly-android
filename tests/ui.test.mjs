@@ -4,6 +4,7 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
 import {verifyReaderLayout,verifyCompactPlayerControls,verifyReaderScrollAndArticleMenu} from './reader-layout.test.mjs';
+import {enterLibraryPaper,openLibraryArticle} from './library-navigation.mjs';
 
 let playwright;try{playwright=await import('playwright')}catch{playwright=await import(pathToFileURL(path.join(process.env.LOCALAPPDATA,'ms-playwright-go/1.57.0/package/index.mjs')).href)}
 const {chromium}=playwright;
@@ -26,7 +27,7 @@ try{
  // Open the original sample rather than depending on the bundled-paper order.
  await click('[data-action="nav"][data-route="library"]');
  assert.doesNotMatch(await page.locator('#app').innerText(),/听力资料库|每份材料，都是下一次进步的开始/,'library removes redundant headings');
- await click('[data-action="open"][data-paper="listenly-original"][data-article="morning"]');
+ await openLibraryArticle(page,'listenly-original','morning');
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
  await verifyReaderLayout(page,path.join(root,'dist'));
  await verifyCompactPlayerControls(page);
@@ -50,7 +51,7 @@ try{
  await page.screenshot({path:path.join(root,'dist/intensive-phone.png'),fullPage:true});
  await page.reload();await page.locator('.focus-card').waitFor();
  await click('[data-action="nav"][data-route="library"]');
- await click('[data-action="open"][data-paper="listenly-original"][data-article="morning"]');
+ await openLibraryArticle(page,'listenly-original','morning');
  await click('[data-action="mode"][data-mode="exam"]');
  assert.match(await page.locator('.feedback').innerText(),/答对了/,'answer persists on restart');
  await click('[data-action="next-question"]');
@@ -72,10 +73,10 @@ try{
  await copyFile(path.join(webRoot,'media/morning.wav'),path.join(material,'audio.wav'));
  await click('[data-action="nav"][data-route="library"]');
  await page.locator('#folder-input').setInputFiles(fixture);
- await page.locator('[data-action="open"][data-paper="paper-ui"]').waitFor();
+ await page.locator('[data-action="open-paper"][data-paper="paper-ui"]').waitFor();
  await page.reload();await page.locator('.focus-card').waitFor();
  await click('[data-action="nav"][data-route="library"]');
- await click('[data-action="open"][data-paper="paper-ui"]');
+ await openLibraryArticle(page,'paper-ui','article-ui');
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
  assert.ok(await page.locator('#audio').evaluate(a=>a.duration>20),'imported audio restored');
  await click('[data-action="mode"][data-mode="intensive"]');
@@ -84,13 +85,14 @@ try{
  // Import a second mode and confirm one aligned article rather than duplicate papers.
  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('listenly-import',{detail:{mode:'exam',name:'做题',files:[{path:'paper-ui/paper.json',text:JSON.stringify({id:'paper-ui',title:'UI导入验证',articles:[{id:'article-ui',title:'Import and restart',audio:{exam:'article-ui/audio.wav'},questions:'article-ui/questions.json'}]})},{path:'paper-ui/article-ui/audio.wav',url:'media/morning.wav'},{path:'paper-ui/article-ui/questions.json',text:JSON.stringify([{id:'q1',number:1,prompt:'Imported question?',options:[{id:'A',text:'One'},{id:'B',text:'Two'},{id:'C',text:'Three'},{id:'D',text:'Four'}],answer:'A'}])}]}})));
  await page.waitForTimeout(200);await click('[data-action="nav"][data-route="library"]');
+ await enterLibraryPaper(page,'paper-ui');
  assert.equal(await page.locator('[data-action="open"][data-paper="paper-ui"]').count(),1,'both modes merge into one article');
  // Exercise the real noncontiguous question clip: passage context + question prompt.
  const bundled=JSON.parse(await readFile(path.join(webRoot,'bundled-library.json'),'utf8'));
  const timed=bundled.papers.find(p=>p.id==='cet6-2013-06-set2');
  const passage=timed?.articles.find(a=>a.questions.some(q=>q.audioTimeline?.length>1));
  if(passage){
-   await click(`[data-action="open"][data-paper="${timed.id}"][data-article="${passage.id}"]`);
+   await openLibraryArticle(page,timed.id,passage.id);
    await click('[data-action="mode"][data-mode="intensive"]');
    await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
    const question=passage.questions[0],segment=question.audioTimeline[1];

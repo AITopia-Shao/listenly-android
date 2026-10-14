@@ -18,6 +18,7 @@ on:
       - tests/audio-replay.test.mjs
       - tests/activity.test.mjs
       - tests/theme-home-profile.test.mjs
+      - tests/library-navigation.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
       - tools/build-web-compat.mjs
@@ -51,6 +52,7 @@ on:
       - tests/audio-replay.test.mjs
       - tests/activity.test.mjs
       - tests/theme-home-profile.test.mjs
+      - tests/library-navigation.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
       - tools/build-web-compat.mjs

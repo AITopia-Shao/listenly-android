@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
+import {enterLibraryPaper,openLibraryArticle} from './library-navigation.mjs';
 
 // Exercise the rendered app with genuine pointer gestures and decoded audio.
 let playwright;
@@ -24,7 +25,8 @@ const dateKeys=await page.evaluate(()=>{
  return {today:format(now),previous:format(previous)};
 });
 const legacyKey=JSON.stringify(['retired-paper','past-article','old-question']);
-const seed={theme:'light',mode:'exam',display:'bilingual',activityVersion:1,days:{[dateKeys.previous]:3600,[dateKeys.today]:180},studyDays:{[dateKeys.previous]:3420},dailyQuestions:{[dateKeys.previous]:{[legacyKey]:1},[dateKeys.today]:{[legacyKey]:3}},answers:{[legacyKey]:{choice:'A',submitted:true,at:Date.now()-86400000}}};
+const legacyArticleKey=JSON.stringify(['retired-paper','past-article']);
+const seed={theme:'light',mode:'exam',display:'bilingual',activityVersion:2,days:{[dateKeys.previous]:3600,[dateKeys.today]:180},completedListeningDays:{[dateKeys.today]:180},studyDays:{[dateKeys.previous]:3420},dailyQuestions:{[dateKeys.previous]:{[legacyKey]:1},[dateKeys.today]:{[legacyKey]:3}},dailyArticles:{[dateKeys.previous]:{[legacyArticleKey]:2},[dateKeys.today]:{[legacyArticleKey]:1}},answers:{[legacyKey]:{choice:'A',submitted:true,at:Date.now()-86400000}},activity:{[JSON.stringify(['listenly-original','morning'])]:{last:Date.now(),seconds:600}}};
 await page.addInitScript(seed=>{if(!localStorage.getItem('listenly.state.v1'))localStorage.setItem('listenly.state.v1',JSON.stringify(seed))},seed);
 const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
 const click=selector=>page.locator(selector).first().click();
@@ -68,6 +70,28 @@ async function chooseSpeed(value){
  assert.equal(await page.locator('[data-action="speed"]').first().getAttribute('aria-expanded'),'false','the speed control closes with its menu');
  assert.match(await page.locator('[data-action="speed"]').first().innerText(),new RegExp(`^${String(value).replace('.','\\.')}\\s*×$`),'the displayed rate matches the selected rate');
 }
+function shortRecording(bytes,duration){
+ assert.equal(bytes.toString('ascii',0,4),'RIFF');assert.equal(bytes.toString('ascii',8,12),'WAVE');
+ let format,pcm;
+ for(let offset=12;offset+8<=bytes.length;){const tag=bytes.toString('ascii',offset,offset+4),size=bytes.readUInt32LE(offset+4);if(tag==='fmt ')format=bytes.subarray(offset+8,offset+8+size);if(tag==='data'){pcm=bytes.subarray(offset+8,offset+8+size);break}offset+=8+size+(size%2)}
+ assert.ok(format&&pcm,'original recording has PCM format and data');assert.equal(format.readUInt16LE(0),1,'original fixture is PCM');
+ const align=format.readUInt16LE(12),byteRate=format.readUInt32LE(8),data=pcm.subarray(0,Math.floor(duration*byteRate/align)*align);
+ const header=Buffer.alloc(28+format.length);header.write('RIFF');header.writeUInt32LE(header.length+data.length-8,4);header.write('WAVE',8);header.write('fmt ',12);header.writeUInt32LE(format.length,16);format.copy(header,20);header.write('data',20+format.length);header.writeUInt32LE(data.length,24+format.length);
+ return Buffer.concat([header,data]);
+}
+async function importSelectionFixture(){
+ const folder=path.join(output,'selection-fixture','experience-selection');await mkdir(folder,{recursive:true});
+ const recording=shortRecording(await readFile(path.join(webRoot,'media/morning.wav')),2);
+ await writeFile(path.join(folder,'paper.json'),JSON.stringify({id:'experience-selection',title:'选择与统计验证',year:2001,articles:[{id:'first',title:'第1篇 · 1–4题',audio:{intensive:'first/audio.wav',exam:'first/audio.wav'},transcript:'first/transcript.json',questions:'first/questions.json'},{id:'second',title:'第2篇 · 5-8 题',audio:{intensive:'second/audio.wav',exam:'second/audio.wav'},transcript:'second/transcript.json',questions:'second/questions.json'}]}));
+ for(const id of ['first','second']){
+  const directory=path.join(folder,id);await mkdir(directory,{recursive:true});await writeFile(path.join(directory,'audio.wav'),recording);
+  await writeFile(path.join(directory,'transcript.json'),JSON.stringify([{start:0,end:2,en:'An original listening fixture.',zh:'原创听力验证。'}]));
+  await writeFile(path.join(directory,'questions.json'),JSON.stringify([{id:'q1',number:id==='first'?1:5,prompt:'Choose the first option.',options:['A','B','C','D'].map(id=>({id,text:`Option ${id}`})),answer:'A'}]));
+ }
+ await page.locator('#folder-input').setInputFiles(path.dirname(folder));
+ await page.locator('[data-action="open-paper"][data-paper="experience-selection"]').waitFor();
+ if(await page.locator('[data-action="close-dialog"]').count())await click('[data-action="close-dialog"]');
+}
 try{
  await page.goto(url);await page.locator('.focus-card').waitFor();
  await checkOutsideReader('home');
@@ -96,13 +120,17 @@ try{
  assert.ok(Math.abs((await audioState()).time-paused.time)<.04,'homepage audio button pauses the real recording');
  pass('home plays/pauses real audio; theme changes preserve playback',{start,paused,darkHome});
  const rowPlay=page.locator('.home-paper-row [data-action="home-play"]').first();
- const rowBefore=await rowPlay.boundingBox();
- const orderBefore=await page.locator('.home-paper-row [data-action="home-play"]').evaluateAll(items=>items.map(b=>b.dataset.article));
+ const previousFocus=await homePlay.getAttribute('data-article');
+ const rowArticle=await rowPlay.getAttribute('data-article');
+ const rowPaper=await rowPlay.getAttribute('data-paper');
  await rowPlay.click();await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.currentSrc.endsWith('/library.wav')&&a.currentTime>.15&&!a.error});
- const rowAfter=await rowPlay.boundingBox();assert.deepEqual(rowAfter,rowBefore,'playing a list item keeps its button under the same finger position');
- assert.deepEqual(await page.locator('.home-paper-row [data-action="home-play"]').evaluateAll(items=>items.map(b=>b.dataset.article)),orderBefore,'home audio playback does not reorder the list');
- await rowPlay.click();await page.waitForFunction(()=>document.querySelector('#audio').paused);
- pass('list audio plays in place and the same button pauses it');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),rowArticle,'playing a listed article immediately promotes it to the home focus');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),rowPaper,'the focus promotion identifies the same selected paper');
+ assert.equal(await page.locator(`.home-paper-row [data-action="home-play"][data-article="${rowArticle}"]`).count(),0,'the promoted article is removed from the remaining list');
+ assert.equal(await page.locator(`.home-paper-row [data-action="home-play"][data-article="${previousFocus}"]`).count(),1,'the previous focus returns to the remaining list');
+ assert.equal(await page.locator('.practice-header').count(),0,'promotion stays on home');
+ await page.locator('.focus-play').click();await page.waitForFunction(()=>document.querySelector('#audio').paused);
+ pass('playing a listed article immediately promotes it to the home focus without reader navigation');
  await page.reload();await page.locator('.focus-card').waitFor();assert.equal(await page.locator('html').getAttribute('data-theme'),'dark','dark theme persists on reload');
  await click('[data-action="theme"][data-theme="light"]');
  const lightHome=await page.evaluate(()=>({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color}));
@@ -175,7 +203,12 @@ try{
  await speedMenu('#pref-speed');await chooseSpeed(1);
  pass('profile uses the same explicit speed control and the selected rate survives reload');
  assert.equal(await numberStat('today-listening-minutes'),3,'listening minutes count today instead of all past days');
- assert.equal(await numberStat('today-questions'),3,'question count includes today only');
+ assert.equal(await numberStat('today-articles'),1,'completed article count includes today only');
+ assert.match(await page.locator('.statistics').innerText(),/今日完成\s*·\s*篇/,'today completion uses articles instead of question submissions');
+ assert.equal(await page.locator('.settings-card [data-action="import"]').count(),0,'profile removes the duplicate import entry');
+ assert.equal(await page.locator('.topbar [data-action="import"]').count(),1,'profile keeps the persistent top import button');
+ await click('.topbar [data-action="import"]');await page.locator('.dialog .import-choice').first().waitFor();assert.equal(await page.locator('.dialog .import-choice').count(),2,'the remaining profile plus opens both import modes');await click('[data-action="close-dialog"]');
+ assert.equal(await page.locator('.history-row').count(),0,'partial listening and partial question records do not appear as recent completed practice');
  assert.ok(Math.abs(await numberStat('total-study-hours')-2)<.05,'total study hours include listening and silent practice across all dates');
  assert.equal((await day(dateKeys.previous)).count,1,'previous-day activity remains separate');
  const todayBefore=await day(dateKeys.today);assert.equal(todayBefore.count,3);
@@ -185,26 +218,123 @@ try{
  await page.screenshot({path:path.join(output,'profile-light.png'),fullPage:true});
  pass('daily statistics and yearly activity calendar reflect stored dated records',{todayBefore});
  await click('[data-action="nav"][data-route="library"]');
- await click('[data-action="open"][data-paper="listenly-original"][data-article="library"]');
+ await openLibraryArticle(page,'listenly-original','library');
  await click('[data-action="mode"][data-mode="exam"]');
- await submit('B');await click('[data-action="next-question"]');await submit('A');await click('[data-action="next-question"]');
- await page.locator('.result-card').waitFor();await click('[data-action="restart-quiz"]');await submit('B');
- const afterRepeating=await saved();assert.equal(Object.values(afterRepeating.dailyQuestions[dateKeys.today]).reduce((a,n)=>a+n,0),6,'repeating a question adds activity without erasing earlier attempts');
+ await submit('B');
+ assert.equal(Object.values((await saved()).dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),1,'one of two submitted questions does not complete an article');
  await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');
- assert.equal(await numberStat('today-questions'),6,'daily question statistic updates after real submissions');
- const todayAfter=await day(dateKeys.today);assert.equal(todayAfter.count,6);assert.ok(todayAfter.level>=todayBefore.level,'more completed questions increase activity level');
+ assert.equal(await numberStat('today-articles'),1,'partial quiz leaves today article statistic unchanged');
+ assert.equal(await page.locator('.history-row').count(),0,'partial quiz stays out of recent practice');
+ await click('[data-action="nav"][data-route="library"]');await openLibraryArticle(page,'listenly-original','library');await click('[data-action="mode"][data-mode="exam"]');
+ await click('[data-action="next-question"]');await submit('A');
+ assert.equal(Object.values((await saved()).dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),2,'the final submission credits one completed article without requiring a result-page visit');
+ await click('[data-action="next-question"]');await page.locator('.result-card').waitFor();await click('[data-action="restart-quiz"]');await submit('B');
+ assert.equal(Object.values((await saved()).dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),2,'partial redo retains previous completion but does not add another');
+ await click('[data-action="next-question"]');await submit('A');
+ const afterRepeating=await saved();assert.equal(Object.values(afterRepeating.dailyQuestions[dateKeys.today]).reduce((a,n)=>a+n,0),7,'repeating all questions adds activity without erasing earlier submissions');
+ assert.equal(Object.values(afterRepeating.dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),3,'a fully completed redo adds one article completion');
+ assert.equal(afterRepeating.articleCompletions[JSON.stringify(['listenly-original','library'])].count,2,'the completed article record tracks the two full attempts');
+ await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');
+ assert.equal(await numberStat('today-articles'),3,'daily completion statistic counts complete articles');
+ assert.equal(await page.locator('.history-row').count(),1,'recent practice lists a fully completed article once');
+ assert.equal(await page.locator('.history-row small').count(),0,'recent practice has no listening minute suffix');
+ assert.doesNotMatch(await page.locator('.history-row').innerText(),/分钟/);
+ const todayAfter=await day(dateKeys.today);assert.equal(todayAfter.count,7);assert.ok(todayAfter.level>=todayBefore.level,'more completed questions increase activity level');
  const lightDay=todayAfter.background;const lightRgb=rgb(lightDay);assert.ok(lightRgb[1]>lightRgb[0]&&lightRgb[1]>lightRgb[2],'daytime activity uses green');
  await click('[data-action="theme"][data-theme="dark"]');
  const darkDay=await day(dateKeys.today),darkRgb=rgb(darkDay.background);assert.ok(darkRgb[0]>darkRgb[1]&&darkRgb[1]>darkRgb[2],'nighttime activity uses orange');
- assert.equal(darkDay.count,6,'changing palette retains the activity count');
+ assert.equal(darkDay.count,7,'changing palette retains the activity count');
  await page.waitForTimeout(220);
  await page.screenshot({path:path.join(output,'profile-dark.png'),fullPage:true});
  pass('real submissions and repeated practice update activity; palettes use green/orange',{todayBefore,todayAfter,darkDay});
  for(const viewport of [{width:360,height:800},{width:393,height:873},{width:430,height:932}]){
   await page.setViewportSize(viewport);
+  await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'profile fits phone viewport without horizontal page overflow');
-  const calendar=page.locator('.calendar-day[aria-current="date"]');await calendar.scrollIntoViewIfNeeded();assert.ok(await calendar.isVisible(),'today is reachable; future padding remains hidden');
+  const calendar=page.locator('.calendar-day[aria-current="date"]');assert.ok(await calendar.isVisible(),'profile initially shows today while future padding remains hidden');
+  const geometry=await calendar.evaluate(cell=>{const r=cell.getBoundingClientRect(),v=document.querySelector('.activity-calendar').getBoundingClientRect(),css=getComputedStyle(cell),ring=Math.max(0,(parseFloat(css.outlineWidth)||0)+(parseFloat(css.outlineOffset)||0));return {cell:{left:r.left,right:r.right,top:r.top,bottom:r.bottom},clip:{left:v.left,right:v.right,top:v.top,bottom:v.bottom},ring}});
+  assert.ok(geometry.cell.left-geometry.ring>=geometry.clip.left-.5&&geometry.cell.right+geometry.ring<=geometry.clip.right+.5,'the entire current-day cell and outline fit within the scrolling calendar');
+  assert.ok(geometry.cell.top-geometry.ring>=geometry.clip.top-.5&&geometry.cell.bottom+geometry.ring<=geometry.clip.bottom+.5,'the current-day outline is also clear of the calendar top and bottom edges');
  }
+ pass('the current-day calendar cell and outline remain completely visible on all three phone widths');
+ await page.setViewportSize({width:393,height:873});await click('[data-action="nav"][data-route="library"]');await importSelectionFixture();
+ assert.equal(await page.locator('#library-list [data-action="open"]').count(),0,'library root displays paper directories instead of individual articles');
+ assert.ok(await page.locator('.paper-group-row').count()>=2,'original and imported papers each have one first-level directory');
+ assert.equal(await page.locator('select').count(),0,'library filters use the app menu instead of native select controls');
+ const materialFilter=page.locator('[data-action="filter-menu"][data-filter="kind"]');
+ await materialFilter.click();await page.locator('.filter-popover').waitFor();
+ assert.deepEqual((await page.locator('.filter-popover [data-action="set-filter"][data-filter="kind"]').evaluateAll(buttons=>buttons.map(b=>b.dataset.value))).sort(),['all','real','saved'],'material menu retains all, real and bookmarked choices');
+ await click('.filter-popover [data-action="set-filter"][data-filter="kind"][data-value="saved"]');
+ assert.equal(await page.locator('.paper-group-row').count(),0,'bookmarked filter excludes papers without bookmarked articles');
+ await materialFilter.click();await click('.filter-popover [data-action="set-filter"][data-filter="kind"][data-value="all"]');
+ assert.ok(await page.locator('.paper-group-row').count()>=2,'all materials restores the paper directories');
+ const filter=page.locator('[data-action="filter-menu"][data-filter="year"]');
+ for(const viewport of [{width:360,height:800},{width:393,height:873},{width:430,height:932}]){
+  await page.setViewportSize(viewport);await filter.click();await page.locator('.filter-popover').waitFor();
+  const bounds=await page.locator('.filter-popover').boundingBox();assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=viewport.width&&bounds.y+bounds.height<=viewport.height,'the custom year menu fits the phone viewport');
+  await page.keyboard.press('Escape');
+ }
+ await page.setViewportSize({width:393,height:873});
+ await filter.click();await page.locator('.filter-popover').waitFor();
+ await page.keyboard.press('Escape');assert.equal(await page.locator('.filter-popover').count(),0,'Escape dismisses the filter without changing the selection');
+ assert.equal(await filter.evaluate(b=>getComputedStyle(b).outlineStyle),'none','filter focus adds no outer rounded rectangle');
+ await filter.click();await page.locator('.filter-shade').click({position:{x:3,y:3}});assert.equal(await page.locator('.filter-popover').count(),0,'outside tap cancels filter selection');
+ await filter.click();await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value="2001"]');
+ assert.equal(await filter.getAttribute('aria-expanded'),'false','applying a year dismisses its menu');
+ assert.equal((await filter.locator('.filter-value').innerText()).trim(),'2001','the year filter displays its applied value');
+ assert.equal(await page.locator('.paper-group-row').count(),1,'year selection filters paper directories');
+ assert.equal(await page.locator('[data-action="open-paper"][data-paper="experience-selection"]').count(),1,'year selection retains the matching imported paper');
+ const selectedControl=page.locator('[data-action="select-paper"][data-paper="experience-selection"]');
+ await selectedControl.click();assert.equal(await selectedControl.getAttribute('aria-pressed'),'true','paper selection updates its check indicator');
+ const selectedStyle=await selectedControl.evaluate(b=>({background:getComputedStyle(b).backgroundColor,outline:getComputedStyle(b).outlineStyle,shadow:getComputedStyle(b).boxShadow}));
+ assert.equal(selectedStyle.background,'rgba(0, 0, 0, 0)','the selection glyph has no colored rectangle');assert.equal(selectedStyle.outline,'none');assert.equal(selectedStyle.shadow,'none');
+ const selectedTitle=page.locator('.paper-group-row.is-selected .paper-group-copy h3');
+ const nightSelection=rgb(await selectedTitle.evaluate(e=>getComputedStyle(e).color));assert.ok(nightSelection[0]>nightSelection[1]&&nightSelection[1]>nightSelection[2],'night mode identifies the selected suite with orange');
+ await click('[data-action="theme"][data-theme="light"]');
+ await page.waitForFunction(()=>{const values=getComputedStyle(document.querySelector('.paper-group-row.is-selected')).backgroundColor.match(/[\d.]+/g).slice(0,3).map(Number);return Math.max(...values)-Math.min(...values)<=1&&values[0]<245});
+ const daySelection=rgb(await page.locator('.paper-group-row.is-selected').evaluate(e=>getComputedStyle(e).backgroundColor));assert.ok(Math.max(...daySelection)-Math.min(...daySelection)<=1&&daySelection[0]<245,'day mode shades the selected suite gray');
+ await page.screenshot({path:path.join(output,'library-papers-light.png'),fullPage:true});
+ await click('[data-action="theme"][data-theme="dark"]');
+ await page.waitForTimeout(180);await page.screenshot({path:path.join(output,'library-papers-dark.png'),fullPage:true});
+ await filter.click();await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value=""]');
+ assert.equal(await page.locator('.paper-group-row.is-selected').count(),1,'one suite is selected at a time');
+ assert.equal(await page.locator('[data-action="select-paper"][data-paper="listenly-original"]').getAttribute('aria-pressed'),'false','choosing another suite removes the previous selection');
+ await filter.click();await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value="2001"]');
+ await enterLibraryPaper(page,'experience-selection');
+ assert.deepEqual(await page.locator('#library-list .paper-copy h3').allTextContents(),['第1篇','第2篇'],'material choices omit their question-range title suffixes');
+ await click('[data-action="library-back"]');assert.equal(await page.locator('.paper-group-row').count(),1,'detail back returns to the retained paper filter');
+ await click('[data-action="nav"][data-route="home"]');
+ assert.ok((await page.locator('[data-action="home-play"]').evaluateAll(buttons=>buttons.map(b=>b.dataset.paper))).every(id=>id==='experience-selection'),'the selected paper supplies all home materials');
+ assert.equal((await saved()).selectedPaper,'experience-selection','paper selection is saved');
+ await page.reload();await page.locator('.focus-card').waitFor();
+ assert.ok((await page.locator('[data-action="home-play"]').evaluateAll(buttons=>buttons.map(b=>b.dataset.paper))).every(id=>id==='experience-selection'),'the selected paper and imported articles survive a page reload');
+ assert.doesNotMatch((await page.locator('.paper-list,.focus-card').allTextContents()).join(' '),/[1-8]\s*[–-]\s*[1-8]\s*题/,'home material titles omit question ranges');
+ await click('.home-paper-row [data-action="home-play"][data-article="second"]');
+ await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>.2});
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'second','playing another selected-paper article immediately moves it to the focus card');
+ await click('.focus-play');await page.waitForFunction(()=>document.querySelector('#audio').paused);
+ assert.equal((await saved()).completedListeningDays[dateKeys.today],180,'a partially heard article does not increase completed listening');
+ await click('.focus-open');await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
+ assert.equal((await page.locator('.practice-title').innerText()).trim(),'第2篇','reader title omits question ranges');
+ await click('[data-action="article-list"]');assert.deepEqual(await page.locator('.dialog .article-copy strong').allTextContents(),['第1篇','第2篇'],'reader material menu omits question ranges');await click('[data-action="close-dialog"]');
+ await page.locator('#audio').evaluate(a=>a.currentTime=a.duration-.25);await page.waitForFunction(()=>!document.querySelector('#audio').seeking);
+ await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').ended);
+ assert.equal((await saved()).completedListeningDays[dateKeys.today],180,'seeking past an unheard section and reaching genuine ended does not credit a complete article');
+ await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>.2});
+ await page.waitForFunction(()=>{const a=document.querySelector('#audio');return a.ended&&a.paused});
+ const fullListening=await saved();assert.ok(fullListening.completedListeningDays[dateKeys.today]>181,'a full recording genuinely played from start to ended credits its listening time');
+ await click('[data-action="mode"][data-mode="exam"]');assert.match(await page.locator('.quiz-top').innerText(),/第\s*5\s*题/,'cleaning material titles preserves the original question number inside the quiz');
+ await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');
+ assert.equal(await numberStat('today-listening-minutes'),3,'completed listening displays floor minutes while preserving the newly credited seconds');
+ assert.equal(await numberStat('today-articles'),3,'audio completion and reload do not add quiz article completions');
+ assert.equal(await page.locator('.history-row').count(),1,'completing only audio does not create a recent completed quiz');
+ assert.doesNotMatch(await page.locator('.history-row').innerText(),/[1-8]\s*[–-]\s*[1-8]\s*题|分钟/);
+ pass('paper selection, custom filters, clean titles and full-play listening credit follow completed user actions',{selectedStyle,creditedListeningSeconds:fullListening.completedListeningDays[dateKeys.today]});
+ await click('[data-action="nav"][data-route="library"]');
+ await click('[data-action="filter-menu"][data-filter="year"]');await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value=""]');
+ await enterLibraryPaper(page,'listenly-original');await click('[data-action="nav"][data-route="home"]');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),'listenly-original','opening a paper directory also selects that paper for the home collection');
+ pass('opening a paper directory selects its articles for home');
  assert.deepEqual(result.pageErrors,[]);result.passed=true;
  console.log(JSON.stringify({passed:true,checks:result.checks.length,entrySha256:result.entrySha256,output}));
 }catch(error){result.failure={message:error.message,stack:error.stack};await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}

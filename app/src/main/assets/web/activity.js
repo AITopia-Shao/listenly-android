@@ -63,7 +63,11 @@ export function normalizeActivity(state,now=new Date()){
   state.days=normalizedSeconds(state.days);
   state.studyDays=normalizedSeconds(state.studyDays);
   state.dailyQuestions=normalizedQuestions(state.dailyQuestions);
-  if(state.activityVersion!==1){
+  state.dailyArticles=normalizedQuestions(state.dailyArticles);
+  state.completedListeningDays=normalizedSeconds(state.completedListeningDays);
+  state.articleCompletions=normalizedCompletions(state.articleCompletions);
+  state.listeningSessions=normalizedListeningSessions(state.listeningSessions);
+  if(!(state.activityVersion>=1)){
     const answers=isRecord(state.answers)?state.answers:{};
     Object.keys(answers).forEach(key=>{
       const answer=answers[key];
@@ -75,16 +79,164 @@ export function normalizeActivity(state,now=new Date()){
       // An existing count may already include this legacy answer. Never overwrite it.
       state.dailyQuestions[day][key]=Math.max(1,state.dailyQuestions[day][key]||0);
     });
-    state.activityVersion=1;
   }
+  state.activityVersion=2;
   return state;
 }
 
 function ensureActivity(state){
-  if(state.activityVersion!==1)normalizeActivity(state);
+  if(state.activityVersion!==2)normalizeActivity(state);
   if(!isRecord(state.days))state.days=dictionary();
   if(!isRecord(state.studyDays))state.studyDays=dictionary();
   if(!isRecord(state.dailyQuestions))state.dailyQuestions=dictionary();
+  if(!isRecord(state.dailyArticles))state.dailyArticles=dictionary();
+  if(!isRecord(state.completedListeningDays))state.completedListeningDays=dictionary();
+  if(!isRecord(state.articleCompletions))state.articleCompletions=dictionary();
+  if(!isRecord(state.listeningSessions))state.listeningSessions=dictionary();
+}
+
+function normalizedCompletions(input){
+  const result=dictionary();
+  if(!isRecord(input))return result;
+  Object.keys(input).forEach(key=>{
+    const value=input[key];
+    if(!isRecord(value)||typeof value.fingerprint!=='string'||!value.fingerprint)return;
+    const last=positiveNumber(value.last);
+    if(!last||!Number.isFinite(new Date(last).getTime()))return;
+    result[key]={last,count:Math.max(1,Math.floor(positiveNumber(value.count))),fingerprint:value.fingerprint};
+  });
+  return result;
+}
+
+function completedAnswerSet(state,paperId,article){
+  if(!article||!Array.isArray(article.questions)||!article.questions.length)return null;
+  const entries=[];
+  for(const question of article.questions){
+    const key=JSON.stringify([paperId,article.id,question.id]);
+    const answer=state.answers?.[key],at=positiveNumber(answer?.at);
+    if(!answer?.submitted||!at||!Number.isFinite(new Date(at).getTime()))return null;
+    entries.push([String(question.id),at]);
+  }
+  entries.sort((a,b)=>a[0].localeCompare(b[0]));
+  return {key:JSON.stringify([paperId,article.id]),fingerprint:JSON.stringify(entries),last:Math.max(...entries.map(entry=>entry[1]))};
+}
+
+// A result-page visit is not necessary: the last submitted question completes
+// the article. The full answer-set fingerprint also makes reloads idempotent.
+export function recordArticleCompletion(state,paperId,article,at=Date.now()){
+  ensureActivity(state);
+  const completed=completedAnswerSet(state,paperId,article);
+  if(!completed)return false;
+  const previous=state.articleCompletions[completed.key];
+  if(previous?.fingerprint===completed.fingerprint)return false;
+  const day=localDateKey(at);
+  if(!own(state.dailyArticles,day))state.dailyArticles[day]=dictionary();
+  state.dailyArticles[day][completed.key]=Math.floor(positiveNumber(state.dailyArticles[day][completed.key]))+1;
+  state.articleCompletions[completed.key]={last:dateValue(at).getTime(),count:Math.floor(positiveNumber(previous?.count))+1,fingerprint:completed.fingerprint};
+  return true;
+}
+
+// Historical partial listening cannot prove that an article was heard fully.
+// Completed quizzes can be recovered after the material definitions are loaded.
+export function migrateArticleCompletions(state,papers){
+  ensureActivity(state);
+  let migrated=0;
+  for(const paper of Array.isArray(papers)?papers:[]){
+    for(const article of Array.isArray(paper.articles)?paper.articles:[]){
+      const completed=completedAnswerSet(state,paper.id,article);
+      if(!completed||own(state.articleCompletions,completed.key))continue;
+      const day=localDateKey(completed.last);
+      if(!own(state.dailyArticles,day))state.dailyArticles[day]=dictionary();
+      // A previously exported ledger may already hold this completion.
+      state.dailyArticles[day][completed.key]=Math.max(1,Math.floor(positiveNumber(state.dailyArticles[day][completed.key])));
+      state.articleCompletions[completed.key]={last:completed.last,count:1,fingerprint:completed.fingerprint};
+      migrated++;
+    }
+  }
+  return migrated;
+}
+
+function mergeRanges(ranges,duration){
+  const valid=[];
+  for(const range of Array.isArray(ranges)?ranges:[]){
+    if(!Array.isArray(range)||range.length!==2||!Number.isFinite(range[0])||!Number.isFinite(range[1]))continue;
+    const from=Math.max(0,Math.min(duration,range[0])),to=Math.max(0,Math.min(duration,range[1]));
+    if(to>from)valid.push([from,to]);
+  }
+  valid.sort((a,b)=>a[0]-b[0]);
+  const merged=[];
+  for(const range of valid){
+    const previous=merged[merged.length-1];
+    if(previous&&range[0]<=previous[1]+.001)previous[1]=Math.max(previous[1],range[1]);
+    else merged.push(range);
+  }
+  return merged;
+}
+
+function normalizedListeningSessions(input){
+  const result=dictionary();
+  if(!isRecord(input))return result;
+  Object.keys(input).forEach(key=>{
+    const value=input[key],duration=positiveNumber(value?.duration);
+    if(!isRecord(value)||!duration)return;
+    const days=normalizedSeconds(value.days);
+    // Pending sessions only contain known local playback dates. Unknown older
+    // keys remain undated and are handled at completion, rather than guessed.
+    Object.keys(days).forEach(day=>{if(!normalizeDateKey(day))delete days[day]});
+    result[key]={duration,ranges:mergeRanges(value.ranges,duration),seconds:positiveNumber(value.seconds),days,completed:value.completed===true};
+  });
+  return result;
+}
+
+export function resetListeningSession(state,key,duration){
+  ensureActivity(state);
+  duration=positiveNumber(duration);
+  if(!duration)return false;
+  state.listeningSessions[String(key)]={duration,ranges:[],seconds:0,days:dictionary(),completed:false};
+  return true;
+}
+
+// The caller supplies continuous playback only. It must break the media anchor
+// on seeking/source changes and must not turn a seek jump into a heard interval.
+export function recordListeningCoverage(state,key,{from,to,duration,seconds,at=Date.now()}={}){
+  ensureActivity(state);
+  duration=positiveNumber(duration);seconds=positiveNumber(seconds);
+  if(!duration||!Number.isFinite(from)||!Number.isFinite(to)||from<0||to<=from||from>=duration)return false;
+  key=String(key);
+  let session=state.listeningSessions[key];
+  if(!session||Math.abs(session.duration-duration)>.05||(session.completed&&from<=.05)){
+    resetListeningSession(state,key,duration);session=state.listeningSessions[key];
+  }
+  if(session.completed)return false;
+  if(!isRecord(session.days))session.days=dictionary();
+  addDatedSeconds(session.days,seconds,at);
+  session.ranges=mergeRanges([...session.ranges,[from,to]],duration);
+  session.seconds+=seconds;
+  return true;
+}
+
+export function finishListeningArticle(state,key,duration,at=Date.now()){
+  ensureActivity(state);
+  duration=positiveNumber(duration);key=String(key);
+  const session=state.listeningSessions[key];
+  if(!duration||!session||session.completed||Math.abs(session.duration-duration)>.05||!session.seconds)return false;
+  const covered=session.ranges.reduce((sum,[from,to])=>sum+to-from,0);
+  // Only tiny media-clock rounding errors are tolerated, not a skipped section.
+  const tolerance=Math.min(.15,duration*.005);
+  if(covered<duration-tolerance)return false;
+  const day=localDateKey(at);
+  let remaining=session.seconds;
+  for(const playedDay of Object.keys(session.days||{})){
+    const seconds=Math.min(remaining,positiveNumber(session.days[playedDay]));
+    if(!seconds)continue;
+    state.completedListeningDays[playedDay]=positiveNumber(state.completedListeningDays[playedDay])+seconds;
+    remaining-=seconds;
+  }
+  // Pre-release sessions had only an aggregate counter. Keep that amount,
+  // without inventing historical playback dates we cannot reconstruct.
+  if(remaining>0)state.completedListeningDays[day]=positiveNumber(state.completedListeningDays[day])+remaining;
+  session.completed=true;
+  return true;
 }
 
 // Call once for the transition from an unsubmitted answer to a submitted answer.
@@ -100,6 +252,10 @@ export function recordQuestionSubmission(state,questionKey,at=Date.now()){
 
 function recordSeconds(state,field,seconds,at){
   ensureActivity(state);
+  return addDatedSeconds(state[field],seconds,at);
+}
+
+function addDatedSeconds(days,seconds,at){
   seconds=positiveNumber(seconds);
   if(!seconds)return 0;
   const end=dateValue(at).getTime();
@@ -111,7 +267,7 @@ function recordSeconds(state,field,seconds,at){
     // Construct local midnight, so a daylight-saving day can be 23 or 25 hours.
     const nextMidnight=new Date(date.getFullYear(),date.getMonth(),date.getDate()+1).getTime();
     const boundary=Math.min(nextMidnight,end),part=(boundary-cursor)/1000;
-    state[field][key]=positiveNumber(state[field][key])+part;
+    days[key]=positiveNumber(days[key])+part;
     cursor=boundary;
   }
   return seconds;
@@ -131,11 +287,12 @@ function sumValues(input){
 
 export function activitySummary(state,now=new Date()){
   ensureActivity(state);
-  const date=localDateKey(now),listeningSeconds=positiveNumber(state.days[date]);
+  const date=localDateKey(now),listeningSeconds=positiveNumber(state.completedListeningDays[date]);
   const totalListeningSeconds=sumValues(state.days),totalStudySeconds=sumValues(state.studyDays);
   return {
     date,listeningSeconds,listeningMinutes:Math.floor(listeningSeconds/60),
     completedQuestions:sumValues(state.dailyQuestions[date]),
+    completedArticles:sumValues(state.dailyArticles[date]),
     totalListeningSeconds,totalStudySeconds,totalSeconds:totalListeningSeconds+totalStudySeconds,
     studyHours:(totalListeningSeconds+totalStudySeconds)/3600
   };
