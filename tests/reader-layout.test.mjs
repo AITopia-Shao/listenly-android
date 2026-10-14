@@ -21,7 +21,7 @@ export async function verifyReaderLayout(page,artifactRoot){
   },size);
   await page.locator('[data-action="mode"][data-mode="intensive"]').click();
   for(const display of ['original','bilingual']){
-   await page.locator(`[data-action="display"][data-display="${display}"]`).click();
+   await page.locator(`.display-controls [data-action="display"][data-display="${display}"]`).click();
    await page.locator('.transcript-card').waitFor();
    const measured=await measureReader(page,size,display);
    results.push(measured);
@@ -59,7 +59,7 @@ export async function verifyReaderLayout(page,artifactRoot){
   document.documentElement.style.setProperty('--safe-bottom','0px');
  });
  await page.locator('[data-action="mode"][data-mode="intensive"]').click();
- await page.locator('[data-action="display"][data-display="bilingual"]').click();
+ await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();
  return results;
 }
 
@@ -140,19 +140,19 @@ export async function verifyReaderScrollAndArticleMenu(page){
  await page.locator('[data-action="nav"][data-route="library"]').click();
  await page.locator('[data-action="open"][data-paper="paper-layout-scroll"]').click();
  await page.locator('[data-action="mode"][data-mode="intensive"]').click();
- await page.locator('[data-action="display"][data-display="bilingual"]').click();
+ await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();
  await page.locator('.main-panel').evaluate(panel=>{
   const sentence=panel.querySelector('.sentence[data-index="5"]');
   panel.scrollTop+=sentence.getBoundingClientRect().top-panel.getBoundingClientRect().top+24;
  });
  const before=await visibleSentence(page);
  assert.ok(Number(before.index)>0,'long passage really scrolls before changing text mode');
- await page.locator('[data-action="display"][data-display="original"]').click();
+ await page.locator('.display-controls [data-action="display"][data-display="original"]').click();
  const original=await visibleSentence(page);
  assert.equal(original.index,before.index,'showing original text retains the visible sentence');
  assert.ok(Math.abs(original.offset-before.offset)<2,'showing original text retains the reading offset');
- await page.locator('[data-action="display"][data-display="hidden"]').click();
- await page.locator('[data-action="display"][data-display="bilingual"]').click();
+ await page.locator('.display-controls [data-action="display"][data-display="hidden"]').click();
+ await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();
  const restored=await visibleSentence(page);
  assert.equal(restored.index,before.index,'temporarily hiding the transcript preserves the reading sentence');
  assert.ok(Math.abs(restored.offset-before.offset)<2,'temporarily hiding the transcript preserves its offset');
@@ -163,7 +163,7 @@ export async function verifyReaderScrollAndArticleMenu(page){
  });
  const translationOnly=await visibleSentence(page);
  assert.equal(translationOnly.index,'5','translation-only edge case starts on the intended sentence');
- await page.locator('[data-action="display"][data-display="original"]').click();
+ await page.locator('.display-controls [data-action="display"][data-display="original"]').click();
  assert.equal((await visibleSentence(page)).index,translationOnly.index,'removing a partly visible translation keeps its English sentence reachable');
  await page.locator('[data-action="mode"][data-mode="exam"]').click();
  const option=page.locator('[data-action="answer"][data-option="D"]');
@@ -182,7 +182,7 @@ export async function verifyReaderScrollAndArticleMenu(page){
  await page.locator('[data-action="nav"][data-route="library"]').click();
  await page.locator('[data-action="open"][data-paper="listenly-original"][data-article="morning"]').click();
  await page.locator('[data-action="mode"][data-mode="intensive"]').click();
- await page.locator('[data-action="display"][data-display="bilingual"]').click();
+ await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();
 }
 
 async function visibleSentence(page){

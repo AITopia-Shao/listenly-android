@@ -6,8 +6,8 @@ import http from 'node:http';
 import assert from 'node:assert/strict';
 
 const [serial,apk,label='runtime',...flags]=process.argv.slice(2);
-const publicDemo=flags.includes('--demo');
-if(!serial?.startsWith('emulator-')||!apk||flags.some(flag=>flag!=='--demo'))throw new Error('Usage: node tools/android-smoke.mjs emulator-5554 app.apk label [--demo]');
+const publicDemo=flags.includes('--demo'),localReal=flags.includes('--real');
+if(!serial?.startsWith('emulator-')||!apk||flags.some(flag=>!['--demo','--real'].includes(flag))||(publicDemo&&localReal))throw new Error('Usage: node tools/android-smoke.mjs emulator-5554 app.apk label [--demo|--real]');
 const sdk=process.env.ANDROID_SDK_ROOT||process.env.ANDROID_HOME;
 const adb=process.env.ADB||(sdk?path.join(sdk,'platform-tools',process.platform==='win32'?'adb.exe':'adb'):
   process.platform==='win32'?'C:/Program Files (x86)/Android/android-sdk/platform-tools/adb.exe':'adb');
@@ -39,7 +39,7 @@ async function recoverSystemUiDialog(stage){
  return true;
 }
 try{
- if(publicDemo){
+ if(publicDemo||localReal){
   assert.equal(run(['shell','getprop','ro.kernel.qemu']).trim(),'1','Demo interaction must run on an emulator');
   result.avd=run(['emu','avd','name']).trim().split(/\r?\n/)[0].trim();
   assert.ok(result.avd.startsWith('Listenly_'),'Public demo check uses this project AVD');
@@ -75,12 +75,57 @@ try{
  const rpc=(method,params={})=>new Promise((resolve,reject)=>{const key=++id;pending.set(key,{resolve,reject});socket.send(JSON.stringify({id:key,method,params}));setTimeout(()=>{if(pending.delete(key))reject(new Error(`${method} timed out`))},15000).unref()});
  const evaluate=async expression=>{const response=await rpc('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(response.exceptionDetails)throw new Error(JSON.stringify(response.exceptionDetails));return response.result.value};
  const poll=async expression=>{for(let i=0;i<30;i++){const value=await evaluate(expression);if(value)return value;await wait(500)}throw new Error(`UI readiness failed: ${expression}`)};
+ const tapControl=async selector=>{
+  const tap=await evaluate(`(()=>{var selector=${JSON.stringify(selector)},b=document.querySelector(selector),r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return {x:x,y:y,scale:devicePixelRatio,visible:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,hit:hit&&hit.closest(selector)===b}})()`);
+  assert.ok(tap.visible&&tap.hit,`Visible native touch target: ${selector}`);
+  run(['shell','input','tap',String(Math.round(tap.x*tap.scale)),String(Math.round(tap.y*tap.scale))]);
+  return tap;
+ };
  result.home=await poll('document.querySelector(".focus-card") && document.body.innerText');
  assert.ok(await evaluate('!!document.querySelector(".focus-card [data-action=open],.focus-card [data-action=import]")'),'Homepage has an actionable listening material entry');
  result.webview=await evaluate('navigator.userAgent');
  result.viewport=await evaluate('({width:innerWidth,height:innerHeight,contentWidth:document.documentElement.scrollWidth})');
  assert.ok(result.viewport.contentWidth<=result.viewport.width+1,'Mobile page fits the viewport');
- await evaluate(publicDemo?'document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click();document.querySelector("[data-action=mode][data-mode=intensive]").click()':'document.querySelector(".focus-card [data-action=open]").click()');
+ assert.equal(await evaluate('document.querySelectorAll("[data-action=mode]").length'),0,'Home has no training mode controls');
+ assert.equal(await evaluate('document.querySelectorAll(".theme-control button").length'),2,'Home has a day/night control');
+ assert.equal(await evaluate('document.querySelectorAll(".section-header button").length'),0,'Home has no redundant All entrance');
+ await tapControl('.focus-card [data-action=home-play]');
+ result.homePlayback=await poll('(()=>{var a=document.querySelector("#audio");return !a.paused&&a.currentTime>0&&!a.error?{time:a.currentTime,paused:a.paused}:null})()');
+ assert.ok(!await evaluate('!!document.querySelector(".practice-header")'),'Home audio does not open the reader');
+ await tapControl('[data-action=theme][data-theme=dark]');
+ await poll('document.documentElement.dataset.theme==="dark"');
+ await wait(900);
+ result.darkHome=await evaluate('({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color,playing:!document.querySelector("#audio").paused,time:document.querySelector("#audio").currentTime})');
+ assert.ok(result.darkHome.playing&&result.darkHome.time>result.homePlayback.time+.2,'Changing appearance preserves actual home playback');
+ assert.equal(result.darkHome.background,'rgb(23, 23, 23)','Night mode uses the dark background');
+ await writeFile(path.join(root,'home-dark.png'),run(['exec-out','screencap','-p'],true));
+ await tapControl('.focus-card [data-action=home-play]');await poll('document.querySelector("#audio").paused');
+ await evaluate('window.__appearanceReloadProbe=true');await rpc('Page.reload');
+ await poll('!window.__appearanceReloadProbe&&document.querySelector(".focus-card")');
+ assert.equal(await evaluate('document.documentElement.dataset.theme'),'dark','Night mode survives a page reload');
+ await tapControl('[data-action=theme][data-theme=light]');await poll('document.documentElement.dataset.theme==="light"');
+ await writeFile(path.join(root,'home-light.png'),run(['exec-out','screencap','-p'],true));
+ let realSelection;
+ if(localReal){
+  const library=JSON.parse(await readFile('app/src/main/assets/web/bundled-library.json','utf8'));
+  const paper=library.papers.find(p=>p.id==='cet6-2025-12-set1');assert.ok(paper,'Local real check needs the lite built-in paper');
+  const answers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
+  const article=paper.articles.find(a=>(a.questions||[]).some(q=>!answers[JSON.stringify([paper.id,a.id,q.id])]?.submitted));
+  assert.ok(article,'The project emulator has an unanswered real question');
+  realSelection={paper,article};
+  await evaluate(`document.querySelector('[data-action=nav][data-route=library]').click();document.querySelector('[data-action=open][data-paper="${paper.id}"][data-article="${article.id}"]').click()`);
+ }else await evaluate(publicDemo?'document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click();document.querySelector("[data-action=mode][data-mode=intensive]").click()':'document.querySelector(".focus-card [data-action=open]").click()');
+ assert.ok(await evaluate('!!document.querySelector("[data-mode=intensive][aria-pressed=true]")&&!!document.querySelector("[data-display=hidden][aria-pressed=true]")'),'Opening the reader defaults to intensive and hidden');
+ const bookmarkSnapshot=()=>evaluate('(()=>{var b=document.querySelector("[data-action=bookmark]");return {pressed:b.getAttribute("aria-pressed"),background:getComputedStyle(b).backgroundColor,fill:getComputedStyle(b.querySelector("svg path")).fill}})()');
+ result.bookmarkBefore=await bookmarkSnapshot();
+ await tapControl('[data-action=bookmark]');await wait(220);result.bookmarkToggled=await bookmarkSnapshot();
+ assert.notEqual(result.bookmarkToggled.pressed,result.bookmarkBefore.pressed,'First touch toggles the bookmark');
+ assert.equal(result.bookmarkToggled.fill==='none',result.bookmarkToggled.pressed==='false','Bookmark state changes the glyph fill');
+ assert.equal(result.bookmarkToggled.background,result.bookmarkBefore.background,'No rectangular bookmark background is added');
+ await tapControl('[data-action=bookmark]');await wait(220);result.bookmarkRestored=await bookmarkSnapshot();
+ assert.deepEqual(result.bookmarkRestored,result.bookmarkBefore,'Second touch restores the original glyph and background');
+ assert.equal(await evaluate('document.querySelector("#toast").classList.contains("visible")'),false,'Bookmark toggle leaves no notification box');
+
  await poll('document.querySelector("#audio").readyState >= 1');
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
@@ -103,12 +148,6 @@ try{
   assert.equal(result.playbackStart,0,'Original demo starts at zero so playback progression is measurable');
  }
  // Use an Android input event so WebView receives the same gesture as a real screen tap.
- const tapControl=async selector=>{
-  const tap=await evaluate(`(()=>{var selector=${JSON.stringify(selector)},b=document.querySelector(selector),r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return {x:x,y:y,scale:devicePixelRatio,visible:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,hit:hit&&hit.closest(selector)===b}})()`);
-  assert.ok(tap.visible&&tap.hit,`Visible native touch target: ${selector}`);
-  run(['shell','input','tap',String(Math.round(tap.x*tap.scale)),String(Math.round(tap.y*tap.scale))]);
-  return tap;
- };
  const tapPlay=async()=>{result.tap=await tapControl('[data-action=play]')};
  const playing='(()=>{var a=document.querySelector("#audio");return !a.paused&&a.currentTime>0?{paused:a.paused,time:a.currentTime}:null})()';
  await tapPlay();
@@ -146,6 +185,11 @@ try{
   result.answerTap=await tapControl(`[data-action=answer][data-option="${qs[index].answer}"]`);
   await poll('document.querySelector("[data-action=submit-answer]")&&!document.querySelector("[data-action=submit-answer]").disabled');
   result.submitTap=await tapControl('[data-action=submit-answer]');
+ }else if(localReal){
+  const answers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
+  const {paper,article}=realSelection;
+  const index=article.questions.findIndex(q=>!answers[JSON.stringify([paper.id,article.id,q.id])]?.submitted);
+  await evaluate(`document.querySelector('[data-action=question][data-index="${index}"]').click();document.querySelector('[data-action=answer]').click();document.querySelector('[data-action=submit-answer]').click()`);
  }else await evaluate('document.querySelector("[data-action=answer]").click();document.querySelector("[data-action=submit-answer]").click()');
  await poll('document.querySelector(".feedback")');
  if(publicDemo){

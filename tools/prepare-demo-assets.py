@@ -14,7 +14,7 @@ import shutil
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-WEB_FILES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js")
+WEB_FILES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js")
 OPTIONAL_WEB_FILES = ("app.compat.js", "compat-polyfills.js")
 
 

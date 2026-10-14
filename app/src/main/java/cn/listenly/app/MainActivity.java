@@ -74,10 +74,12 @@ public final class MainActivity extends Activity {
     private Object backCallback;
     private final StringBuilder startupWarnings = new StringBuilder();
     private float insetTop, insetBottom, insetLeft, insetRight;
+    private boolean darkTheme;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         if (state != null) pendingMode = state.getString("pending-import-mode");
+        darkTheme = "dark".equals(getSharedPreferences("listenly.preferences", MODE_PRIVATE).getString("theme", "light"));
         importsRoot = new File(getFilesDir(), "imports");
         if (!importsRoot.exists()) importsRoot.mkdirs();
         configureWindowSafely();
@@ -93,7 +95,7 @@ public final class MainActivity extends Activity {
         webView = null;
         try {
         webView = new WebView(this);
-        webView.setBackgroundColor(Color.rgb(247, 248, 245));
+        webView.setBackgroundColor(darkTheme ? Color.rgb(23, 23, 23) : Color.rgb(250, 250, 250));
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -175,7 +177,7 @@ public final class MainActivity extends Activity {
             try {
                 getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
                         View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                        View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+                        (darkTheme ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR));
             } catch (RuntimeException | LinkageError fallbackFailure) {
                 noteCompatibilityFailure("兼容系统栏初始化", fallbackFailure);
             }
@@ -284,16 +286,16 @@ public final class MainActivity extends Activity {
             // onCreate runs before setContentView, so create the decor first.
             getWindow().getDecorView();
             WindowInsetsController controller = getWindow().getInsetsController();
-            if (controller != null) controller.setSystemBarsAppearance(
-                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
-                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+            if (controller != null) controller.setSystemBarsAppearance(darkTheme ? 0 :
+                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
                     WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
                     WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
         } else {
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
                     View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+                    (darkTheme ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR));
         }
+        getWindow().getDecorView().setBackgroundColor(darkTheme ? Color.rgb(23, 23, 23) : Color.rgb(250, 250, 250));
     }
 
     private void pushInsets() {
@@ -325,6 +327,16 @@ public final class MainActivity extends Activity {
     }
 
     private final class AndroidBridge {
+        @JavascriptInterface public void setTheme(String theme) {
+            if (!"light".equals(theme) && !"dark".equals(theme)) return;
+            runOnUiThread(() -> {
+                darkTheme = "dark".equals(theme);
+                getSharedPreferences("listenly.preferences", MODE_PRIVATE).edit().putString("theme", theme).apply();
+                configureWindowSafely();
+                if (webView != null) webView.setBackgroundColor(darkTheme ? Color.rgb(23, 23, 23) : Color.rgb(250, 250, 250));
+            });
+        }
+
         @JavascriptInterface public void importFolder(String mode) {
             if (!"intensive".equals(mode) && !"exam".equals(mode)) return;
             runOnUiThread(() -> {

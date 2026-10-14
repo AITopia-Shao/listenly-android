@@ -8,6 +8,12 @@
 | --- | --- | --- |
 | ![首页](docs/screenshots/home.png) | ![精听](docs/screenshots/intensive.png) | ![做题](docs/screenshots/quiz.png) |
 
+## 1.0.5 的外观与学习记录
+
+日间改为黑白灰，夜间使用黑底橙字，首页顶部提供外观切换；训练模式只在正文页显示。首页播放按钮直接播音频，标题进入正文并默认精听、隐藏原文。收藏只切换书签空心／实心，取消后不留下背景或提示框。
+
+“我的”改为今日听力分钟、今日完成题次和累计学习小时，新增过去一年的做题活跃日历：日间绿色、夜间橙色，重做题目也累计活跃度。旧记录迁移与统计口径见 [外观及按日统计验收](docs/themes-and-activity.md)。
+
 ## 1.0.4 的播放修复
 
 修复安卓 WebView 读取非零音频范围时二次跳过数据的问题，避免重开文章、切换材料或拖动进度后的解码失败；播放器出错后重新加载并保留位置，正常取消不再误报文件损坏，听完的文章重开从头播放。保留 1.0.3 的紧凑阅读布局。根因、旧包复现和验证范围见 [重复播放验收](docs/audio-replay.md)。
@@ -97,6 +103,7 @@ npm test
 npm run test:demo
 npm run test:ui
 npm run test:replay
+npm run test:experience
 python tools/test-range-stream.py --java-home "$JAVA_HOME"
 ```
 

@@ -6,10 +6,10 @@
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowNoTitle">true</item>
-        <item name="android:windowBackground">#F7F8F5</item>
-        <item name="android:colorAccent">#48754D</item>
-        <item name="android:navigationBarColor">#F7F8F5</item>
-        <item name="android:statusBarColor">#F7F8F5</item>
+        <item name="android:windowBackground">#FAFAFA</item>
+        <item name="android:colorAccent">#242424</item>
+        <item name="android:navigationBarColor">#FAFAFA</item>
+        <item name="android:statusBarColor">#FAFAFA</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>

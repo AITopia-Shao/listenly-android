@@ -16,6 +16,8 @@ on:
       - tools/test-range-stream.py
       - tests/java/**
       - tests/audio-replay.test.mjs
+      - tests/activity.test.mjs
+      - tests/theme-home-profile.test.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
       - tools/build-web-compat.mjs
@@ -47,6 +49,8 @@ on:
       - tools/test-range-stream.py
       - tests/java/**
       - tests/audio-replay.test.mjs
+      - tests/activity.test.mjs
+      - tests/theme-home-profile.test.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
       - tools/build-web-compat.mjs
@@ -109,6 +113,7 @@ jobs:
           npx playwright install --with-deps chromium
           npm run test:ui
           npm run test:replay
+          npm run test:experience
       - name: Save the original demo test APK and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -123,6 +128,7 @@ jobs:
             .build/demo/build.log
             .build/range-stream-tests/result.json
             .build/replay-browser/latest/result.json
+            .build/theme-home-profile/
           include-hidden-files: true
           retention-days: 14
 
@@ -194,7 +200,7 @@ jobs:
           } | tee .build/ci/sdk-environment.log
       - name: Test source logic
         run: |
-          node --test tests/alignment.test.mjs tests/importer.test.mjs
+          node --test tests/alignment.test.mjs tests/importer.test.mjs tests/activity.test.mjs
           python3 tools/test-range-stream.py
       - name: Build the frontend for older Android WebView
         run: |

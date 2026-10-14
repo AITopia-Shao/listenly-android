@@ -79,6 +79,7 @@ try{
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
  assert.ok(await page.locator('#audio').evaluate(a=>a.duration>20),'imported audio restored');
  await click('[data-action="mode"][data-mode="intensive"]');
+ await click('[data-action="display"][data-display="bilingual"]');
  assert.match(await page.locator('.transcript-card').innerText(),/Original imported sentence/);
  // Import a second mode and confirm one aligned article rather than duplicate papers.
  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('listenly-import',{detail:{mode:'exam',name:'做题',files:[{path:'paper-ui/paper.json',text:JSON.stringify({id:'paper-ui',title:'UI导入验证',articles:[{id:'article-ui',title:'Import and restart',audio:{exam:'article-ui/audio.wav'},questions:'article-ui/questions.json'}]})},{path:'paper-ui/article-ui/audio.wav',url:'media/morning.wav'},{path:'paper-ui/article-ui/questions.json',text:JSON.stringify([{id:'q1',number:1,prompt:'Imported question?',options:[{id:'A',text:'One'},{id:'B',text:'Two'},{id:'C',text:'Three'},{id:'D',text:'Four'}],answer:'A'}])}]}})));

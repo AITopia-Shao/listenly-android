@@ -181,6 +181,7 @@ try{
   await open('listenly-original','library');await play('second WAV source');await pause();
   await open('listenly-original','morning');await play('WAV return from different article');await pause();
   await click('[data-action="nav"][data-route="home"]');await open('listenly-original','morning');await play('WAV return from home');await pause();
+  await click('[data-action="display"][data-display="bilingual"]');
   await click('.sentence[data-index="1"]');await page.waitForFunction(()=>!document.querySelector('#audio').paused);await record('sentence selection starts actual playback');
   await click('[data-action="loop"]');await page.locator('#audio').evaluate(a=>a.currentTime=11.19);
   await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&!a.seeking&&a.currentTime>=5.329&&a.currentTime<7},{},{timeout:15000});

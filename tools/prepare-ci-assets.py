@@ -12,7 +12,7 @@ import struct
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-WEB_MODULES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js")
+WEB_MODULES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js")
 COMPAT_MODULES = ("app.compat.js", "compat-polyfills.js")
 
 

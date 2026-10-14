@@ -49,12 +49,12 @@ try {
         if (!$taskNames.Add($taskEntry.FullName)) { throw "Duplicate ZIP entry: $($taskEntry.FullName)" }
         if ($taskEntry.FullName -match '\.fingerprint$|/\.[^/]*tmp$|\.tmp$|(?:^|/)\.?cache/') { throw "Cache / temporary file in APK: $($taskEntry.FullName)" }
     }
-    foreach ($taskRequired in @('AndroidManifest.xml','resources.arsc','classes.dex','assets/web/index.html','assets/web/app.compat.js','assets/web/app.js','assets/web/styles.css','assets/web/importer.js','assets/web/alignment.js','assets/web/demo.json','assets/web/bundled-library.json')) {
+    foreach ($taskRequired in @('AndroidManifest.xml','resources.arsc','classes.dex','assets/web/index.html','assets/web/app.compat.js','assets/web/app.js','assets/web/styles.css','assets/web/importer.js','assets/web/alignment.js','assets/web/activity.js','assets/web/demo.json','assets/web/bundled-library.json')) {
         if (!$taskNames.Contains($taskRequired)) { throw "Required app entry missing: $taskRequired" }
     }
     if ($taskArchive.GetEntry('resources.arsc').Length -ne $taskArchive.GetEntry('resources.arsc').CompressedLength) { throw 'resources.arsc must be uncompressed for current Android targets' }
     $taskSourceWeb = Join-Path ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))) 'app\src\main\assets\web'
-    foreach ($taskModule in @('index.html','app.compat.js','app.js','styles.css','importer.js','alignment.js','demo.json')) {
+    foreach ($taskModule in @('index.html','app.compat.js','app.js','styles.css','importer.js','alignment.js','activity.js','demo.json')) {
         $taskHash = [Security.Cryptography.SHA256]::Create()
         $taskStream = $taskArchive.GetEntry('assets/web/' + $taskModule).Open()
         try { $taskEntryHash = [BitConverter]::ToString($taskHash.ComputeHash($taskStream)).Replace('-','') }
