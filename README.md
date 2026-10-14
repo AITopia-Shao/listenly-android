@@ -16,6 +16,8 @@
 
 在 393 × 873 像素的浏览器窗口中，可阅读滚动区域从 273px 增至 684px，占窗口高度由 31.3% 增至 78.4%；播放器由 159px 缩为 84px，并移除原来的 70px 导航。该比例衡量可阅读区域的高度，不代表实际文字覆盖面积。带模拟安全区的测量与检查范围见 [紧凑阅读界面验收](docs/compact-reader.md)。
 
+[1.0.3 安装包](https://github.com/AITopia-Shao/listenly-android/releases/tag/v1.0.3) 已发布，[本次 Android 8 / 11 / 16 与浏览器回归](https://github.com/AITopia-Shao/listenly-android/actions/runs/38491462110) 全部通过。
+
 ## 安装与材料
 
 支持 **Android 8.0 及以上**，需要可用的系统 WebView。公开安装包内置原创英语示例，可离线体验全部训练流程，再从 `＋` 导入自己的材料。应用无需服务器、登录或 API 密钥，Android 包没有联网权限。
