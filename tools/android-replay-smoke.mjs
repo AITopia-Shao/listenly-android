@@ -50,7 +50,11 @@ try{
  result.avd=run(['emu','avd','name']).trim().split(/\r?\n/)[0];assert.ok(result.avd.startsWith('Listenly_'),'Only this project AVD may be changed');
  result.android=run(['shell','getprop','ro.build.version.release']).trim();result.api=run(['shell','getprop','ro.build.version.sdk']).trim();
  if(Number(result.api)>=36){await wait(15000);for(let i=0;i<3;i++)if(!await recoverSystemUi(`startup-${i}`))break}
- result.install=run(['install','-r',path.resolve(apk)]).trim();run(['shell','am','force-stop','cn.listenly.app']);run(['logcat','-c']);
+ result.install=run(['install','-r',path.resolve(apk)]).trim();run(['shell','am','force-stop','cn.listenly.app']);
+ // Older system images can read logcat but reject clearing its main buffer.
+ // Retain that collection limitation; it does not waive any runtime checks.
+ result.logcatCleared=true;
+ try{run(['logcat','-c'])}catch(error){result.logcatCleared=false;result.logcatClearError=String(error.message)}
  result.launch=run(['shell','am','start','-W','-n','cn.listenly.app/.MainActivity']).trim();await wait(5000);if(Number(result.api)>=36)for(let i=0;i<3;i++)if(!await recoverSystemUi(`launch-${i}`))break;
  result.pid=run(['shell','pidof','cn.listenly.app']).trim();assert.ok(result.pid,'Application remains running');
  const remote=`webview_devtools_remote_${result.pid}`;run(['forward','tcp:9334',`localabstract:${remote}`]);forwarded=true;
