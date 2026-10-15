@@ -184,6 +184,7 @@ try{
  await poll('!document.querySelector(".speed-popover")&&document.querySelector(".practice-header")');
  assert.equal(await evaluate('document.querySelector("#audio").playbackRate'),1.25,'Android back dismisses the popup without changing rate or leaving the reader');
  await tapControl('[data-action=speed]');
+ await poll('document.querySelector(".speed-popover")&&document.querySelector("[data-action=speed]").getAttribute("aria-expanded")==="true"');
  await tapControl(`.speed-popover [data-action=set-speed][data-speed="${result.speedBefore}"]`);
  await poll(`!document.querySelector(".speed-popover")&&document.querySelector("#audio").playbackRate===${result.speedBefore}`);
  if(publicDemo){
