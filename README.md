@@ -12,7 +12,11 @@
 
 做题页移除书面题干，仅显示题号与选项。同篇所有题目集中在一个页面，点击题目行下拉展开选项，选择后收起并回显完整内容，不自动跳题。选齐后统一“提交本篇”，再展开查看正误与解析，或查看整篇成绩；既有答案、草稿和音频对齐继续保留。
 
-本版安装包与兼容性检查正在进行，结果将在验证完成后更新。交互规则及验证范围见 [整篇下拉答题](docs/compact-quiz.md)。
+本版通过 24 组新做题布局、17 项使用体验、86 项真实音频回归，以及 [Android 8 / 11 / 16 云端检查](https://github.com/AITopia-Shao/listenly-android/actions/runs/38749668307)。交互规则及验证范围见 [整篇下拉答题](docs/compact-quiz.md)，安装包见 [1.0.8 发布页](https://github.com/AITopia-Shao/listenly-android/releases/tag/v1.0.8)。
+
+| 下拉选项 | 整篇待提交 | 夜间做题 |
+| --- | --- | --- |
+| ![下拉选项](docs/screenshots/quiz.png) | ![整篇待提交](docs/screenshots/quiz-sheet.png) | ![夜间做题](docs/screenshots/quiz-dark.png) |
 
 ## 1.0.7 的套卷目录与完成统计
 
