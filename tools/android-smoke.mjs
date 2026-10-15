@@ -202,34 +202,67 @@ try{
  await poll('document.querySelector(".quiz-card") && document.querySelector("#audio").readyState >= 1');
  result.modeTime=await evaluate('document.querySelector("#audio").currentTime');
  assert.ok(Math.abs(result.modeTime-10)<.5,'Native playback timeline preserved when changing mode');
- if(publicDemo){
-  result.answersBeforeInteraction=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
-  const demo=JSON.parse(await readFile(path.resolve('examples/demo/demo.json'),'utf8'));
-  const qs=demo.articles.find(article=>article.id==='morning').questions;
-  const index=qs.findIndex(question=>!result.answersBeforeInteraction[JSON.stringify(['listenly-original','morning',question.id])]?.submitted);
-  assert.ok(index>=0,'The project emulator has an unanswered original demo question for a real submission');
-  result.demoQuestion={index,id:qs[index].id,answer:qs[index].answer};
-  await evaluate(`document.querySelector('[data-action=question][data-index="${index}"]').click()`);
-  result.answerTap=await tapControl(`[data-action=answer][data-option="${qs[index].answer}"]`);
-  await poll('document.querySelector("[data-action=submit-answer]")&&!document.querySelector("[data-action=submit-answer]").disabled');
-  result.submitTap=await tapControl('[data-action=submit-answer]');
- }else if(localReal){
-  const answers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
-  const {paper,article}=realSelection;
-  const index=article.questions.findIndex(q=>!answers[JSON.stringify([paper.id,article.id,q.id])]?.submitted);
-  await evaluate(`document.querySelector('[data-action=question][data-index="${index}"]').click();document.querySelector('[data-action=answer]').click();document.querySelector('[data-action=submit-answer]').click()`);
- }else await evaluate('document.querySelector("[data-action=answer]").click();document.querySelector("[data-action=submit-answer]").click()');
- await poll('document.querySelector(".feedback")');
- if(publicDemo){
-  result.feedback=await evaluate('document.querySelector(".feedback").innerText');
-  assert.ok(await evaluate(`!!document.querySelector('[data-action=answer][data-option="${result.demoQuestion.answer}"].correct')`),'The original demo correct answer is visibly graded');
+ const interactionPaper=localReal?realSelection.paper:publicDemo?JSON.parse(await readFile(path.resolve('examples/demo/demo.json'),'utf8')):await evaluate('fetch("demo.json").then(r=>r.json())');
+ const interactionActive=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).active');
+ const interactionArticle=interactionPaper.articles.find(article=>article.id===interactionActive.article);
+ assert.ok(interactionArticle,'Native interaction uses a known bundled article');
+ const qs=interactionArticle.questions;
+ result.answersBeforeInteraction=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
+ const completionKey=JSON.stringify([interactionPaper.id,interactionArticle.id]);
+ result.articleCompletionBefore=await evaluate(`JSON.parse(localStorage.getItem('listenly.state.v1')).articleCompletions[${JSON.stringify(completionKey)}]||null`);
+ const keyFor=q=>JSON.stringify([interactionPaper.id,interactionArticle.id,q.id]);
+ const pendingQuestions=qs.map((q,index)=>({q,index,key:keyFor(q)})).filter(({key})=>!result.answersBeforeInteraction[key]?.submitted);
+ assert.ok(pendingQuestions.length,'The project emulator has an unanswered article for a real whole-article submission');
+ assert.equal(await evaluate('document.querySelectorAll(".quiz-question[data-question-index]").length'),qs.length,'Every question in the article is present on the same page');
+ assert.equal(await evaluate('document.querySelectorAll(".question-dot,[data-action=next-question],[data-action=submit-answer],.quiz-card h3").length'),0,'The article has no question pager, individual submit action or written question heading');
+ for(const q of qs)if(q.prompt)assert.ok(!await evaluate(`document.querySelector('.quiz-card').textContent.includes(${JSON.stringify(q.prompt)})`),'Written listening questions are absent from the exam DOM');
+ assert.ok(await evaluate('document.querySelectorAll(".quiz-question.is-open").length<=1'),'Only one question dropdown is expanded at a time');
+ const expandedIndex=await evaluate('(()=>{var row=document.querySelector(".quiz-question.is-open");return row?row.dataset.questionIndex:null})()');
+ if(expandedIndex!==null){
+  const selector=`[data-action=toggle-question][data-index="${expandedIndex}"]`;
+  await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
+  await tapControl(selector);await poll('document.querySelectorAll(".quiz-question.is-open").length===0');await wait(220);
  }
+ result.quizGeometry=await evaluate('(()=>{var panel=document.querySelector(".main-panel"),p=panel.getBoundingClientRect(),rows=[...document.querySelectorAll(".quiz-question")],submit=document.querySelector("[data-action=submit-article]"),s=submit.getBoundingClientRect();return {width:innerWidth,height:innerHeight,panel:{left:p.left,right:p.right,top:p.top,bottom:p.bottom},scrollHeight:panel.scrollHeight,clientHeight:panel.clientHeight,rows:rows.map(row=>{var r=row.getBoundingClientRect();return {index:row.dataset.questionIndex,left:r.left,right:r.right,top:r.top,bottom:r.bottom}}),submit:{top:s.top,bottom:s.bottom}}})()');
+ for(const row of result.quizGeometry.rows)assert.ok(row.left>=result.quizGeometry.panel.left-1&&row.right<=result.quizGeometry.panel.right+1&&row.top>=result.quizGeometry.panel.top-1&&row.bottom<=result.quizGeometry.panel.bottom+1,'Every collapsed question row fits above the audio dock');
+ assert.ok(result.quizGeometry.submit.bottom<=result.quizGeometry.panel.bottom+1,'The whole-article submit control fits on the same compact page');
+ const changedKeys=new Set();result.articleChoices=[];
+ for(const {q,index,key} of pendingQuestions){
+  const toggle=`[data-action=toggle-question][data-index="${index}"]`,optionId=publicDemo?q.answer:q.options[0].id;
+  await evaluate(`document.querySelector(${JSON.stringify(toggle)}).scrollIntoView({block:'center'})`);
+  const opened=await tapControl(toggle);
+  await poll(`document.querySelector(${JSON.stringify(toggle)}).getAttribute('aria-expanded')==='true'&&document.querySelectorAll('.quiz-question.is-open').length===1`);await wait(220);
+  const option=`[data-action=answer][data-index="${index}"][data-option="${optionId}"]`;
+  await evaluate(`document.querySelector(${JSON.stringify(option)}).scrollIntoView({block:'center'})`);
+  const choice=await tapControl(option);
+  await poll(`document.querySelector(${JSON.stringify(toggle)}).getAttribute('aria-expanded')==='false'`);await wait(220);
+  assert.ok(await evaluate(`document.querySelector(${JSON.stringify(toggle)}).innerText.includes(${JSON.stringify(q.options.find(o=>o.id===optionId).text)})`),'The collapsed row shows the complete chosen option');
+  assert.equal(await evaluate(`JSON.parse(localStorage.getItem('listenly.state.v1')).answers[${JSON.stringify(key)}].submitted`),false,'Choosing an option saves a draft without grading or advancing');
+  const remainingUnchosen=pendingQuestions.some(item=>item.key!==key&&!changedKeys.has(item.key)&&!item.q.options.some(o=>o.id===result.answersBeforeInteraction[item.key]?.choice));
+  if(remainingUnchosen){assert.ok(await evaluate('document.querySelector("[data-action=submit-article]").disabled'),'A partially answered article cannot be submitted');result.partialSubmissionPrevented=true}
+  changedKeys.add(key);result.articleChoices.push({index,id:q.id,choice:optionId,opened,choiceTap:choice});
+ }
+ await poll('document.querySelector("[data-action=submit-article]")&&!document.querySelector("[data-action=submit-article]").disabled');
+ await evaluate('document.querySelector("[data-action=submit-article]").scrollIntoView({block:"center"})');
+ result.submitTap=await tapControl('[data-action=submit-article]');
+ await poll('document.querySelector("[data-action=view-result]")&&document.querySelectorAll(".quiz-question.is-open").length===0');
  result.answer=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
- if(publicDemo){
-  const key=JSON.stringify(['listenly-original','morning',result.demoQuestion.id]);
-  assert.ok(result.answer[key]?.choice===result.demoQuestion.answer&&result.answer[key]?.submitted,'The newly submitted original demo answer is saved');
-  for(const [savedKey,savedAnswer] of Object.entries(result.answersBeforeInteraction))if(savedKey!==key)assert.deepEqual(result.answer[savedKey],savedAnswer,'Previously saved answers remain unchanged');
+ result.articleCompletionAfter=await evaluate(`JSON.parse(localStorage.getItem('listenly.state.v1')).articleCompletions[${JSON.stringify(completionKey)}]||null`);
+ assert.equal(result.articleCompletionAfter?.count,(result.articleCompletionBefore?.count||0)+1,'Finishing the article credits exactly one complete article');
+ for(const q of qs)assert.ok(result.answer[keyFor(q)]?.submitted,'One whole-article submission commits all question choices');
+ for(const chosen of result.articleChoices){
+  const q=qs[chosen.index],key=keyFor(q);
+  assert.equal(result.answer[key].choice,chosen.choice,'The selected choice is retained after grading');
+  if(publicDemo)assert.ok(await evaluate(`!!document.querySelector('.quiz-question[data-question-index="${chosen.index}"] .question-state.is-correct')`),'The original demo answer has a correct-state glyph after submission');
  }
+ for(const [savedKey,savedAnswer] of Object.entries(result.answersBeforeInteraction))if(!changedKeys.has(savedKey))assert.deepEqual(result.answer[savedKey],savedAnswer,'Previously submitted answers and other article records remain unchanged');
+ const reviewIndex=result.articleChoices[0].index,reviewToggle=`[data-action=toggle-question][data-index="${reviewIndex}"]`;
+ await evaluate(`document.querySelector(${JSON.stringify(reviewToggle)}).scrollIntoView({block:'center'})`);await tapControl(reviewToggle);await wait(220);
+ assert.ok(await evaluate(`!!document.querySelector('.quiz-question[data-question-index="${reviewIndex}"] .question-feedback')`),'An expanded submitted question exposes answer feedback');
+ assert.ok(await evaluate(`Array.from(document.querySelectorAll('.quiz-question[data-question-index="${reviewIndex}"] [data-action=answer]')).every(b=>b.disabled)`),'Submitted answer choices cannot be changed');
+ await tapControl(reviewToggle);await wait(220);
+ await evaluate('document.querySelector("[data-action=view-result]").scrollIntoView({block:"center"})');await tapControl('[data-action=view-result]');
+ await poll('document.querySelector(".result-card")');
  await evaluate('document.querySelector("[data-action=nav][data-route=home]").click()');
  await evaluate('window.__listenlyReloadProbe=true');
  await rpc('Page.reload');

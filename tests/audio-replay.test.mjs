@@ -105,8 +105,11 @@ async function createImportedFixture(){
 async function transientReadFailure(){
   await open('listenly-original','morning');
   await click('[data-action="mode"][data-mode="exam"]');
-  await click('[data-action="answer"][data-option="B"]');
-  await click('[data-action="submit-answer"]');
+  for(const [index,choice] of [[0,'B'],[1,'A'],[2,'C']]){
+    const toggle=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+    await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${choice}"]`);
+  }
+  await click('[data-action="submit-article"]');
   await click('[data-action="mode"][data-mode="intensive"]');
   if(await page.locator('.bookmark:not(.active)').count())await click('[data-action="bookmark"]');
   await seek(6);await play('transient read failure: first playback succeeds');await pause();
@@ -223,8 +226,8 @@ try{
     const timed=library.papers.find(p=>p.id==='cet6-2013-06-set2');assert.ok(timed,'--real requires local 2013 cut M4A');
     await open(timed.id,'conversation-01');await seek(10);await play('M4A timed article');await pause();
     await click('[data-action="mode"][data-mode="exam"]');await metadata();assert.match((await snapshot()).src,/-q09\.m4a$/);await play('M4A genuine cut question');await pause();await finishAndReplay('M4A cut question');
-    await click('[data-action="question"][data-index="1"]');await metadata();assert.match((await snapshot()).src,/-q10\.m4a$/);await play('M4A next cut question');await pause();
-    await click('[data-action="question"][data-index="0"]');await metadata();await play('M4A return to previous cut question');await pause();
+    await click('[data-action="toggle-question"][data-index="1"]');await metadata();assert.match((await snapshot()).src,/-q10\.m4a$/);await play('M4A next cut question');await pause();
+    await click('[data-action="toggle-question"][data-index="0"]');await metadata();await play('M4A return to previous cut question');await pause();
     await click('[data-action="mode"][data-mode="intensive"]');await metadata();await play('M4A return to full article');await pause();
   }
   if(!args.includes('--skip-read-failure'))await transientReadFailure();

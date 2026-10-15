@@ -1,0 +1,115 @@
+import assert from 'node:assert/strict';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {startPreview} from '../tools/preview.mjs';
+import {openLibraryArticle} from './library-navigation.mjs';
+
+let playwright;try{playwright=await import('playwright')}catch{playwright=await import(pathToFileURL(path.join(process.env.LOCALAPPDATA,'ms-playwright-go/1.57.0/package/index.mjs')).href)}
+const args=process.argv.slice(2),root=process.cwd();
+const option=name=>{const at=args.indexOf(name);return at<0?null:args[at+1]};
+const webRoot=path.resolve(option('--web-root')||path.join(root,args.includes('--demo')?'.build/demo/main/assets/web':'app/src/main/assets/web'));
+const output=path.resolve(option('--output')||'.build/compact-quiz');await mkdir(output,{recursive:true});
+const result={passed:false,entrySha256:createHash('sha256').update(await readFile(path.join(webRoot,'app.compat.js'))).digest('hex'),checks:[],layouts:[],pageErrors:[]};
+const browser=await playwright.chromium.launch({...(process.env.LISTENLY_BROWSER_CHANNEL?{channel:process.env.LISTENLY_BROWSER_CHANNEL}:(process.platform==='win32'?{channel:'msedge'}:{})),headless:true});
+const page=await browser.newPage({viewport:{width:393,height:873},timezoneId:'Asia/Shanghai',deviceScaleFactor:1});
+page.on('pageerror',error=>result.pageErrors.push(error.message));
+const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
+const paperId='compact-quiz-original',fixtureRoot=path.join(output,'fixture'),fixturePaper=path.join(fixtureRoot,paperId);
+const prompts=[],explanations=[];
+const choices=['A','B','C','D'];
+const optionText=id=>({A:'The researchers collected evidence from local communities before they announced their final conclusions.',B:'The team invited several students to discuss their experiences during the summer research project.',C:'The volunteers shared useful information with their neighbours after the community meeting had ended.',D:'The report recommended improving public services while protecting the natural environment around the town.'})[id];
+const fixtures=[{id:'three',title:'第1篇 · 1–3题',count:3},{id:'four',title:'第2篇 · 4–7题',count:4}];
+function cutWave(bytes,start,end){
+ assert.equal(bytes.toString('ascii',0,4),'RIFF');assert.equal(bytes.toString('ascii',8,12),'WAVE');
+ let format,pcm;for(let offset=12;offset+8<=bytes.length;){const tag=bytes.toString('ascii',offset,offset+4),size=bytes.readUInt32LE(offset+4);if(tag==='fmt ')format=bytes.subarray(offset+8,offset+8+size);if(tag==='data'){pcm=bytes.subarray(offset+8,offset+8+size);break}offset+=8+size+(size%2)}
+ assert.ok(format&&pcm);assert.equal(format.readUInt16LE(0),1);const align=format.readUInt16LE(12),rate=format.readUInt32LE(8),data=pcm.subarray(Math.floor(start*rate/align)*align,Math.floor(end*rate/align)*align);
+ const header=Buffer.alloc(28+format.length);header.write('RIFF');header.writeUInt32LE(header.length+data.length-8,4);header.write('WAVE',8);header.write('fmt ',12);header.writeUInt32LE(format.length,16);format.copy(header,20);header.write('data',20+format.length);header.writeUInt32LE(data.length,24+format.length);return Buffer.concat([header,data]);
+}
+async function makeFixture(){
+ await mkdir(fixturePaper,{recursive:true});const audio=await readFile(path.join(webRoot,'media/morning.wav'));
+ const articles=[];
+ for(const fixture of fixtures){
+  const directory=path.join(fixturePaper,fixture.id);await mkdir(directory,{recursive:true});await writeFile(path.join(directory,'full.wav'),audio);
+  const questions=[];for(let index=0;index<fixture.count;index++){
+   const prompt=`HIDDEN_PROMPT_${fixture.id}_${index}: Which answer is correct?`,explanation=`EXPLANATION_${fixture.id}_${index}: This original explanation is available after submission.`;prompts.push(prompt);explanations.push(explanation);
+   questions.push({id:`q${index+1}`,number:fixture.id==='three'?index+1:index+4,prompt,explanation,options:choices.map(id=>({id,text:optionText(id)})),...(fixture.id==='four'&&index===1?{}:{answer:choices[index]}),audio:`q${index+1}.wav`,start:index*6,end:(index+1)*6,audioTimeline:[{clipStart:0,clipEnd:6,articleStart:index*6}]});
+   await writeFile(path.join(directory,`q${index+1}.wav`),cutWave(audio,index*6,(index+1)*6));
+  }
+  await writeFile(path.join(directory,'questions.json'),JSON.stringify(questions));await writeFile(path.join(directory,'transcript.json'),JSON.stringify([{start:0,en:'An original article for compact quiz verification.',zh:'整篇做题布局的原创验证材料。'}]));
+  articles.push({id:fixture.id,title:fixture.title,audio:{intensive:`${fixture.id}/full.wav`,exam:`${fixture.id}/full.wav`},transcript:`${fixture.id}/transcript.json`,questions:`${fixture.id}/questions.json`});
+ }
+ await writeFile(path.join(fixturePaper,'paper.json'),JSON.stringify({id:paperId,title:'原创整篇做题验证',year:2002,articles}));
+}
+const click=selector=>page.locator(selector).first().click();
+const saved=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));
+const answerKey=(article,index)=>JSON.stringify([paperId,article,`q${index+1}`]);
+const materialKey=article=>JSON.stringify([paperId,article]);
+const dailySum=state=>Object.values(state.dailyArticles||{}).reduce((sum,day)=>sum+Object.values(day).reduce((n,count)=>n+count,0),0);
+const questionSum=state=>Object.values(state.dailyQuestions||{}).reduce((sum,day)=>sum+Object.values(day).reduce((n,count)=>n+count,0),0);
+function pass(label,details){result.checks.push({label,...(details?{details}:{})})}
+function row(index){return page.locator(`.quiz-question[data-question-index="${index}"]`)}
+function toggle(index){return page.locator(`[data-action="toggle-question"][data-index="${index}"]`)}
+async function openQuestion(index){if(await toggle(index).getAttribute('aria-expanded')!=='true')await toggle(index).click()}
+async function closeAll(){const expanded=page.locator('[data-action="toggle-question"][aria-expanded="true"]');if(await expanded.count())await expanded.click()}
+async function choose(index,choice){await openQuestion(index);await row(index).locator(`[data-action="answer"][data-option="${choice}"]`).click();assert.equal(await toggle(index).getAttribute('aria-expanded'),'false','choosing an option collapses its own row');assert.equal(await page.locator('[data-action="toggle-question"][aria-expanded="true"]').count(),0,'choosing an option does not automatically open another question')}
+async function noQuestionLeak(){const html=await page.locator('.quiz-card').innerHTML();for(const prompt of prompts)assert.ok(!html.includes(prompt),'question prompt is absent from the quiz DOM, including hidden content');assert.equal(await page.locator('.question-dot,[data-action="next-question"],[data-action="submit-answer"]').count(),0,'article questions use no pagination or per-question submit action')}
+async function enter(article){await click('[data-action="nav"][data-route="library"]');await openLibraryArticle(page,paperId,article);await click('[data-action="mode"][data-mode="exam"]');await page.locator('.quiz-question').first().waitFor();await noQuestionLeak()}
+async function geometry(fixture,theme,expanded){
+ await page.waitForTimeout(220);
+ const layout=await page.evaluate(()=>{
+  const panel=document.querySelector('.main-panel'),p=panel.getBoundingClientRect();const rect=e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
+  return {viewport:{width:innerWidth,height:innerHeight},panel:rect(panel),pageOverflow:document.documentElement.scrollWidth>innerWidth,rows:[...document.querySelectorAll('.quiz-question')].map(rect),submit:rect(document.querySelector('.quiz-actions button')),options:[...document.querySelectorAll('.question-toggle[aria-expanded="true"]')].flatMap(button=>[...button.closest('.quiz-question').querySelectorAll('.option')].map(option=>({rect:rect(option),text:option.innerText,scrollHeight:option.scrollHeight,clientHeight:option.clientHeight,whiteSpace:getComputedStyle(option.querySelector('span:nth-child(2)')||option).whiteSpace}))),scroll:{top:panel.scrollTop,client:panel.clientHeight,height:panel.scrollHeight}};
+ });
+ assert.equal(layout.pageOverflow,false,'compact quiz has no horizontal page overflow');assert.equal(layout.rows.length,fixture.count,'the entire article is present together');
+ for(const rectangle of [...layout.rows,layout.submit]){assert.ok(rectangle.left>=layout.panel.left-.5&&rectangle.right<=layout.panel.right+.5,'all article rows stay within the reading width');assert.ok(rectangle.top>=layout.panel.top-.5&&rectangle.bottom<=layout.panel.bottom+.5,`all article questions and submit fit one phone page, including ${expanded?'one expanded group':'collapsed choices'} at ${layout.viewport.width}px`)}
+ if(expanded){assert.equal(layout.options.length,4,'an opened dropdown exposes all four options');for(const option of layout.options){assert.ok(option.clientHeight+1>=option.scrollHeight,'the full expanded option remains available without a clipped text box');assert.notEqual(option.whiteSpace,'nowrap','expanded option text wraps instead of truncating');assert.ok(option.rect.height>=36,'options retain a usable touch target')}}
+ result.layouts.push({article:fixture.id,theme,expanded,...layout});
+ await page.screenshot({path:path.join(output,`${fixture.id}-${theme}-${layout.viewport.width}-${expanded?'open':'collapsed'}.png`),fullPage:true});
+}
+try{
+ await makeFixture();await page.goto(url);await page.locator('.focus-card').waitFor();await click('[data-action="nav"][data-route="library"]');await page.locator('#folder-input').setInputFiles(fixtureRoot);await page.locator(`[data-action="open-paper"][data-paper="${paperId}"]`).waitFor();if(await page.locator('[data-action="close-dialog"]').count())await click('[data-action="close-dialog"]');
+ for(const fixture of fixtures){
+  await enter(fixture.id);assert.equal(await page.locator('.quiz-question').count(),fixture.count);assert.equal(await page.locator('.quiz-card .correct,.quiz-card .wrong,.quiz-card .question-feedback').count(),0,'unsubmitted choices do not expose grading');for(const explanation of explanations)assert.ok(!(await page.locator('.quiz-card').innerHTML()).includes(explanation),'unsubmitted explanations are absent');
+  for(const theme of ['light','dark']){
+   await click('[data-action="nav"][data-route="home"]');await click(`[data-action="theme"][data-theme="${theme}"]`);await enter(fixture.id);
+   for(const viewport of [{width:360,height:800},{width:393,height:873},{width:430,height:932}]){
+    await page.setViewportSize(viewport);await closeAll();await geometry(fixture,theme,false);await openQuestion(0);assert.equal(await page.locator('[data-action="toggle-question"][aria-expanded="true"]').count(),1);await geometry(fixture,theme,true);
+   }
+  }
+ }
+ pass('three- and four-question articles fit one phone page in both themes, with wrapped full options and one open dropdown',{layouts:result.layouts.length});
+ await page.setViewportSize({width:393,height:873});await enter('three');assert.equal(await page.locator('[data-action="submit-article"]').isDisabled(),true,'whole-article submit stays disabled before all choices');
+ await choose(0,'A');assert.equal((await saved()).answers[answerKey('three',0)].submitted,false);assert.equal(dailySum(await saved()),0,'one selected answer cannot count as a completed article');assert.equal(questionSum(await saved()),0,'unsubmitted choices do not increase activity');await choose(0,'D');assert.equal((await saved()).answers[answerKey('three',0)].choice,'D','a choice remains editable before whole-article submission');
+ await page.reload();await page.locator('.focus-card').waitFor();await enter('three');assert.equal((await saved()).answers[answerKey('three',0)].choice,'D','an unsubmitted choice survives reload');await openQuestion(0);assert.equal(await row(0).locator('.option.selected[data-option="D"]').count(),1,'the persisted dropdown highlights its chosen option');await closeAll();
+ await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');assert.equal(await page.locator('.history-row').count(),0,'a partially selected article is excluded from recent completed practice');await enter('three');await choose(0,'A');await choose(1,'B');assert.equal(await page.locator('[data-action="submit-article"]').isDisabled(),true,'one unanswered question still prevents article submission');await choose(2,'C');assert.equal(await page.locator('[data-action="submit-article"]').isEnabled(),true);await noQuestionLeak();assert.equal(await page.locator('.quiz-card .correct,.quiz-card .wrong,.quiz-card .question-feedback').count(),0,'selecting every answer still reveals no grading before submit');
+ const choiceState=await saved();assert.equal(Object.values(choiceState.answers).filter(a=>a.submitted).length,0);await click('[data-action="submit-article"]');const complete=await saved();assert.equal(fixtures[0].count,Object.values(complete.answers).filter(a=>a.submitted).length,'one action submits every answer in the article');assert.equal(dailySum(complete),1);assert.equal(questionSum(complete),3);assert.equal(complete.articleCompletions[materialKey('three')].count,1);await noQuestionLeak();
+ await openQuestion(0);assert.match(await row(0).locator('.question-feedback').innerText(),/答对了/);assert.match(await row(0).locator('.question-explanation').innerText(),/EXPLANATION_three_0/);assert.equal(await row(0).locator('.option:not([disabled])').count(),0,'submitted answers are locked');await openQuestion(1);assert.equal(await toggle(0).getAttribute('aria-expanded'),'false','opening another group closes the previous dropdown');await page.waitForTimeout(220);assert.equal(await page.locator('.question-feedback:visible').count(),1,'only the expanded submitted question shows its explanation');await noQuestionLeak();
+ await click('[data-action="view-result"]');assert.match(await page.locator('.result-card').innerText(),/100%/);assert.match(await page.locator('.result-card').innerText(),/3\s*\/\s*3\s*题答对/);await page.reload();await page.locator('.focus-card').waitFor();await enter('three');assert.equal(dailySum(await saved()),1,'reopening a submitted article never credits it again');assert.equal(questionSum(await saved()),3,'reopening preserves submission activity');
+ pass('selection, pre-submit revision and reload persistence stay separate from one-time whole-article submission and completion');
+ // An imported paper may omit an answer key. Such questions remain answered and
+ // completed, but they must not lower the known-answer accuracy denominator.
+ await enter('four');for(const [index,choice] of [[0,'B'],[1,'A'],[2,'C'],[3,'D']])await choose(index,choice);await click('[data-action="submit-article"]');assert.equal(dailySum(await saved()),2);assert.equal(questionSum(await saved()),7);await openQuestion(1);assert.match(await row(1).locator('.question-feedback').innerText(),/无标准答案/);assert.equal(await row(1).locator('.correct,.wrong').count(),0,'a question without a key is not marked right or wrong');await noQuestionLeak();await click('[data-action="view-result"]');const scoring=await page.locator('.result-card').innerText();assert.match(scoring,/67%/);assert.match(scoring,/2\s*\/\s*3\s*题答对/);assert.match(scoring,/1\s*题无标准答案/);assert.match(scoring,/本篇完成\s*4\s*\/\s*4/);
+ await click('[data-action="restart-quiz"]');for(let i=0;i<4;i++)assert.equal((await saved()).answers[answerKey('four',i)],undefined,'restart clears every selected and submitted answer');assert.equal(await page.locator('[data-action="submit-article"]').isDisabled(),true);assert.equal(await page.locator('.question-feedback,.option.selected,.option.correct,.option.wrong').count(),0,'a restarted attempt hides previous feedback and choices');await choose(0,'A');assert.equal(dailySum(await saved()),2,'a partial redo retains previous completion without adding a new article');for(const [index,choice] of [[1,'D'],[2,'C'],[3,'D']])await choose(index,choice);await click('[data-action="submit-article"]');assert.equal(dailySum(await saved()),3);assert.equal(questionSum(await saved()),11);assert.equal((await saved()).articleCompletions[materialKey('four')].count,2,'a complete redo credits exactly one more article');await noQuestionLeak();
+ pass('unknown answer keys are excluded from accuracy; restart resets the whole article and a complete redo adds exactly one article');
+ // The question index follows the opened dropdown solely for audio alignment;
+ // all rows continue to be rendered when the actual sliced recording changes.
+ await openQuestion(0);await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1&&!document.querySelector('#audio').seeking);const firstClip=await page.locator('#audio').evaluate(a=>({src:a.currentSrc,duration:a.duration}));assert.ok(firstClip.src.startsWith('blob:'));assert.ok(Math.abs(firstClip.duration-6)<.05);
+ await page.locator('#audio').evaluate(a=>a.currentTime=1);await page.waitForFunction(()=>!document.querySelector('#audio').seeking);await openQuestion(2);await page.waitForFunction(src=>{const a=document.querySelector('#audio');return a.currentSrc!==src&&a.readyState>=1&&!a.seeking},firstClip.src);assert.equal((await saved()).questionIndices[materialKey('four')],2);assert.equal(await page.locator('.quiz-question').count(),4,'selecting a question recording keeps every article question present');await page.locator('#audio').evaluate(a=>a.currentTime=1);await page.waitForFunction(()=>!document.querySelector('#audio').seeking);await click('[data-action="mode"][data-mode="intensive"]');await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1&&!document.querySelector('#audio').seeking);assert.ok(Math.abs(await page.locator('#audio').evaluate(a=>a.currentTime)-13)<.2,'question 3 audio maps back to its full-article segment');await click('[data-action="mode"][data-mode="exam"]');await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1&&!document.querySelector('#audio').seeking);assert.ok(Math.abs(await page.locator('#audio').evaluate(a=>a.currentTime)-1)<.2,'full article maps back to the currently selected question recording');assert.equal(await page.locator('.quiz-question').count(),4);await noQuestionLeak();
+ await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&!a.error&&a.currentTime>1.15});await click('[data-action="play"]');assert.equal(await page.locator('#audio').evaluate(a=>a.paused),true);pass('opening a dropdown selects its genuine audio clip without hiding other questions and preserves full/clip alignment and playback');
+ await openQuestion(2);await click('[data-action="article-list"]');await page.locator('.dialog').waitFor();await page.keyboard.press('Escape');assert.equal(await page.locator('.dialog').count(),0,'Escape dismisses the article menu');assert.equal(await toggle(2).getAttribute('aria-expanded'),'true','dismissing the article menu leaves the background question dropdown unchanged');await toggle(2).focus();await page.keyboard.press('Escape');assert.equal(await toggle(2).getAttribute('aria-expanded'),'false','Escape without a modal closes the active question dropdown');
+ pass('dialog dismissal leaves the underlying question state intact; Escape closes a question only when no modal is open');
+ await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');assert.equal(await page.locator('.history-row').count(),2,'only the two completed articles appear in recent practice');assert.equal(await page.locator('[data-stat="today-articles"]').innerText(),'3');assert.equal(await page.locator('.history-row small').count(),0);
+ const legacyPage=await browser.newPage({viewport:{width:393,height:873},timezoneId:'Asia/Shanghai'});legacyPage.on('pageerror',error=>result.pageErrors.push(error.message));
+ const oldAt=Date.now()-3600000,legacyAnswerKey=JSON.stringify(['listenly-original','morning','q1']);
+ const legacyDate=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(oldAt));
+ await legacyPage.addInitScript(({oldAt,legacyAnswerKey,legacyDate})=>localStorage.setItem('listenly.state.v1',JSON.stringify({activityVersion:2,answers:{[legacyAnswerKey]:{choice:'B',submitted:true,at:oldAt}},dailyQuestions:{[legacyDate]:{[legacyAnswerKey]:1}}})),{oldAt,legacyAnswerKey,legacyDate});
+ await legacyPage.goto(url);await legacyPage.locator('.focus-card').waitFor();await legacyPage.locator('[data-action="nav"][data-route="library"]').click();await openLibraryArticle(legacyPage,'listenly-original','morning');await legacyPage.locator('[data-action="mode"][data-mode="exam"]').click();
+ assert.equal(await legacyPage.locator('.quiz-question').count(),3);assert.equal(await legacyPage.locator('.quiz-question[data-question-index="0"] .option:not([disabled])').count(),0,'an old per-question submission remains locked');
+ for(const [index,choice] of [[1,'A'],[2,'C']]){const control=legacyPage.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await control.getAttribute('aria-expanded')!=='true')await control.click();await legacyPage.locator(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${choice}"]`).click()}
+ await legacyPage.locator('[data-action="submit-article"]').click();const legacySaved=await legacyPage.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));assert.equal(legacySaved.answers[legacyAnswerKey].at,oldAt,'whole submission preserves the timestamp of an already submitted legacy answer');assert.equal(questionSum(legacySaved),3,'finishing a legacy partial attempt counts only the two new submissions');assert.equal(dailySum(legacySaved),1,'finishing a legacy partial attempt credits its article exactly once');await legacyPage.close();
+ pass('previously submitted per-question answers survive upgrade and whole-article submission without duplicate activity');
+ assert.deepEqual(result.pageErrors,[]);result.passed=true;console.log(JSON.stringify({passed:true,checks:result.checks.length,layouts:result.layouts.length,entrySha256:result.entrySha256,output}));
+}catch(error){result.failure={message:error.message,stack:error.stack};await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}
+finally{await writeFile(path.join(output,'result.json'),JSON.stringify(result,null,2));await browser.close();await new Promise(resolve=>server.close(resolve))}

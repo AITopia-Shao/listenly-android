@@ -85,6 +85,49 @@ try{
    else await scenario(`round-${round}-mode-and-return`,async()=>{await pause();await tap('[data-action=mode][data-mode=exam]');await poll('document.querySelector(".quiz-card")');const examPlayback=await playAndProgress();await pause();await tap('[data-action=mode][data-mode=intensive]');await poll('document.querySelector(".transcript-card")');const playback=await playAndProgress();await pause();return {examPlayback,playback}});
    await scenario(`round-${round}-relative-seek`,async()=>{await pause();await evaluate('document.querySelector("#audio").currentTime=20');await tap('[data-action=seek-relative][data-seconds="-5"]');await poll('Math.abs(document.querySelector("#audio").currentTime-15)<.2');const seeked=await snapshot();assert.ok(seeked.currentTime>=14.8&&seeked.currentTime<=15.2,'The backward control seeks by five seconds');const playback=await playAndProgress();await tap('[data-action=seek-relative][data-seconds="5"]');await wait(1100);const forward=await snapshot();assert.equal(forward.error,null);assert.ok(forward.currentTime>playback.after.currentTime+4);await pause();return {seeked,playback,forward}});
  }
+ await scenario('whole-article-question-dropdown',async()=>{
+  await pause();await openArticle(firstArticle);await evaluate('document.querySelector("#audio").currentTime=0');await poll('!document.querySelector("#audio").seeking');await tap('[data-action=mode][data-mode=exam]');
+  await poll('document.querySelector(".quiz-questions")&&document.querySelector("#audio").readyState>=1');
+  const paper=fixture?await evaluate('fetch("demo.json").then(r=>r.json())'):JSON.parse(await readFile(demo?'examples/demo/demo.json':'app/src/main/assets/web/bundled-library.json','utf8'));
+  const article=(fixture||demo?paper:paper.papers.find(p=>p.id===paperId)).articles.find(a=>a.id===firstArticle);
+  assert.ok(article?.questions.length,'The replay article has known questions');
+  assert.equal(await evaluate('document.querySelectorAll(".quiz-question[data-question-index]").length'),article.questions.length,'All article questions are present without a pager');
+  assert.equal(await evaluate('document.querySelectorAll(".question-dot,[data-action=next-question],.quiz-card h3").length'),0,'The compact exam contains neither page controls nor written question headings');
+  for(const q of article.questions)if(q.prompt)assert.ok(!await evaluate(`document.querySelector('.quiz-card').textContent.includes(${JSON.stringify(q.prompt)})`),'The question prompt is not rendered in the listening exam');
+  const showQuestion=async index=>{
+   const selector=`[data-action=toggle-question][data-index="${index}"]`;
+   await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
+   if(!await evaluate(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='true'`))await tap(selector);
+   await poll(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='true'&&document.querySelectorAll('.quiz-question.is-open').length===1`);await wait(220);
+  };
+  await showQuestion(0);await poll('document.querySelector("#audio").readyState>=1');
+  const first=await playAndProgress(),before=await snapshot(),nextIndex=article.questions.length>1?1:0;
+  if(nextIndex!==0)await showQuestion(nextIndex);
+  else{
+   await tap('[data-action=toggle-question][data-index="0"]');
+   await poll('document.querySelectorAll(".quiz-question.is-open").length===0');await wait(220);await showQuestion(0);
+  }
+  await poll('document.querySelector("#audio").readyState>=1');
+  const selected=await snapshot();let after,clipPlayback=null;
+  if(selected.attributeSrc===before.attributeSrc){
+   await wait(900);after=await snapshot();assert.equal(after.paused,false,'Shared article audio keeps playing while an option dropdown changes');assert.ok(after.currentTime>before.currentTime+.3,'Opening and closing dropdowns preserves the advancing article timeline');
+  }else{
+   assert.ok(article.questions[nextIndex].audioUrl,'Only a question-specific clip changes the source');
+   assert.equal(selected.error,null,'The selected question clip decodes');
+   assert.ok(selected.paused,'Switching to another question clip waits for an explicit playback tap');
+   clipPlayback=await playAndProgress();after=await snapshot();
+  }
+  assert.equal(after.error,null,'Dropdown interaction leaves native media error-free');
+  await pause();
+  const selector=`[data-action=toggle-question][data-index="${nextIndex}"]`;
+  await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await tap(selector);
+  await poll('document.querySelectorAll(".quiz-question.is-open").length===0');await wait(220);
+  const geometry=await evaluate('(()=>{var p=document.querySelector(".main-panel").getBoundingClientRect(),rows=[...document.querySelectorAll(".quiz-question")].map(b=>{var r=b.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}});return {panel:{left:p.left,right:p.right,top:p.top,bottom:p.bottom},rows:rows}})()');
+  for(const row of geometry.rows)assert.ok(row.left>=geometry.panel.left-1&&row.right<=geometry.panel.right+1&&row.top>=geometry.panel.top-1&&row.bottom<=geometry.panel.bottom+1,'The collapsed whole-article question list fits above the audio dock');
+  await tap('[data-action=mode][data-mode=intensive]');await poll('document.querySelector(".transcript-card")&&document.querySelector("#audio").readyState>=1');
+  const returned=await snapshot();assert.equal(returned.error,null,'Returning from the complete question list retains playable article audio');
+  return {questionCount:article.questions.length,nextIndex,first,before,selected,after,clipPlayback,geometry,returned};
+ });
  // The original demo has timestamps, unlike the real untimed CET article used above.
  if(!fixture)await scenario('timed-sentence-loop',async()=>{await evaluate('window.listenlyBack();document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original]").click();document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click()');await poll('document.querySelector("#audio").readyState>=1');await tap('[data-action=display][data-display=bilingual]');await pause();await evaluate('document.querySelector("#audio").currentTime=0');await tap('[data-action=sentence][data-index="0"]');await poll('!document.querySelector("#audio").paused');await tap('[data-action=loop]');const next=await evaluate('Number(document.querySelector(\'.sentence[data-index="1"] .timestamp\').textContent.split(":").reduce((v,n)=>v*60+Number(n),0))');await evaluate(`document.querySelector('#audio').currentTime=${next-.3}`);await poll(`document.querySelector('#audio').currentTime<${next-1}`);const looped=await snapshot();assert.equal(looped.error,null);assert.equal(looped.paused,false);await tap('[data-action=loop]');await pause();return {boundary:next,looped}});
  result.events=await evaluate('window.__audioEvents');result.savedStateAfter=await evaluate('localStorage.getItem("listenly.state.v1")');

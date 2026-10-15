@@ -32,6 +32,7 @@ on:
       - tests/test_demo_assets.py
       - tests/ui.test.mjs
       - tests/reader-layout.test.mjs
+      - tests/compact-quiz.test.mjs
       - THIRD_PARTY_NOTICES.md
       - package.json
       - package-lock.json
@@ -66,6 +67,7 @@ on:
       - tests/test_demo_assets.py
       - tests/ui.test.mjs
       - tests/reader-layout.test.mjs
+      - tests/compact-quiz.test.mjs
       - THIRD_PARTY_NOTICES.md
       - package.json
       - package-lock.json
@@ -116,6 +118,7 @@ jobs:
           npm run test:ui
           npm run test:replay
           npm run test:experience
+          npm run test:quiz
       - name: Save the original demo test APK and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -131,6 +134,7 @@ jobs:
             .build/range-stream-tests/result.json
             .build/replay-browser/latest/result.json
             .build/theme-home-profile/
+            .build/compact-quiz/
           include-hidden-files: true
           retention-days: 14
 

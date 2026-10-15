@@ -1,6 +1,6 @@
 {
   "name": "listenly-android",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,7 +18,8 @@
     "test:ui": "node tests/ui.test.mjs --demo",
     "test:replay": "node tests/audio-replay.test.mjs --demo",
     "test:materials": "python -m unittest discover -s tests -p test_*.py",
-    "test:experience": "node tests/theme-home-profile.test.mjs --demo"
+    "test:experience": "node tests/theme-home-profile.test.mjs --demo",
+    "test:quiz": "node tests/compact-quiz.test.mjs --demo"
   },
   "devDependencies": {
     "@babel/core": "7.29.7",

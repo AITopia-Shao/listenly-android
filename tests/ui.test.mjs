@@ -19,6 +19,8 @@ const webRoot=path.join(root,demo?'.build/demo/main/assets/web':'app/src/main/as
 const server=await startPreview(0,webRoot);
 const url=`http://127.0.0.1:${server.address().port}`;
 const click=selector=>page.locator(selector).first().click();
+async function openQuestion(index){const control=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await control.getAttribute('aria-expanded')!=='true')await control.click()}
+async function choose(index,option){await openQuestion(index);await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${option}"]`)}
 try{
  await page.goto(url);await page.locator('.focus-card').waitFor();
  assert.doesNotMatch(await page.locator('#app').innerText(),/每一句，都听懂|放慢一点，让英语慢慢清晰|每份材料，都是下一次进步的开始/,'home removes decorative slogans');
@@ -42,8 +44,9 @@ try{
  await page.locator('#audio').evaluate(a=>a.currentTime=12);
  await click('[data-action="mode"][data-mode="exam"]');
  assert.ok(Math.abs(await page.locator('#audio').evaluate(a=>a.currentTime)-12)<.4,'same article progress aligned');
- await click('[data-action="answer"][data-option="B"]');await click('[data-action="submit-answer"]');
- assert.match(await page.locator('.feedback').innerText(),/答对了/);
+ assert.equal(await page.locator('.quiz-question').count(),3,'one article displays all three question rows');
+ await choose(0,'B');await choose(1,'D');await choose(2,'C');await click('[data-action="submit-article"]');
+ await openQuestion(0);assert.match(await page.locator('.quiz-question[data-question-index="0"] .question-feedback').innerText(),/答对了/);
  await page.screenshot({path:path.join(root,'dist/quiz-phone.png'),fullPage:true});
  await click('[data-action="mode"][data-mode="intensive"]');
  assert.match(await page.locator('.practice-title').innerText(),/A small change/);
@@ -53,13 +56,9 @@ try{
  await click('[data-action="nav"][data-route="library"]');
  await openLibraryArticle(page,'listenly-original','morning');
  await click('[data-action="mode"][data-mode="exam"]');
- assert.match(await page.locator('.feedback').innerText(),/答对了/,'answer persists on restart');
- await click('[data-action="next-question"]');
- await click('[data-action="answer"][data-option="D"]');await click('[data-action="submit-answer"]');
- assert.match(await page.locator('.feedback').innerText(),/答案\s*(?:是\s*)?A/,'incorrect choice gets corrected');
- await click('[data-action="next-question"]');
- await click('[data-action="answer"][data-option="C"]');await click('[data-action="submit-answer"]');
- await click('[data-action="next-question"]');
+ await openQuestion(0);assert.match(await page.locator('.quiz-question[data-question-index="0"] .question-feedback').innerText(),/答对了/,'answer persists on restart');
+ await openQuestion(1);assert.match(await page.locator('.quiz-question[data-question-index="1"] .question-feedback').innerText(),/答案\s*(?:是\s*)?A/,'incorrect choice gets corrected');
+ await click('[data-action="view-result"]');
  assert.match(await page.locator('.result-card').innerText(),/本套(?:材料已)?完成\s+3\s*\/\s*5/);
  await click('.result-card [data-action="open"]');
  assert.match(await page.locator('.practice-title').innerText(),/little library/);

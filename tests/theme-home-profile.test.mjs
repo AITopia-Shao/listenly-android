@@ -49,7 +49,8 @@ async function checkDefaultReader(){
 async function bookmarkStyle(){return page.locator('[data-action="bookmark"]').evaluate(b=>{const css=getComputedStyle(b),svg=getComputedStyle(b.querySelector('svg path'));return {background:css.backgroundColor,shadow:css.boxShadow,outline:css.outlineStyle,fill:svg.fill,pressed:b.getAttribute('aria-pressed')}})}
 const numberStat=async name=>Number((await page.locator(`[data-stat="${name}"]`).innerText()).replace(/[^\d.]/g,''));
 async function day(date){return page.locator(`.calendar-day[data-date="${date}"]`).evaluate(b=>({date:b.dataset.date,count:Number(b.dataset.count),level:Number(b.dataset.level),background:getComputedStyle(b).backgroundColor,label:b.getAttribute('aria-label')||b.getAttribute('title')}))}
-async function submit(choice){await click(`[data-action="answer"][data-option="${choice}"]`);await click('[data-action="submit-answer"]');await page.locator('.feedback').waitFor()}
+async function choose(index,choice){const toggle=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${choice}"]`)}
+async function submitArticle(){await click('[data-action="submit-article"]');assert.equal(await page.locator('[data-action="view-result"]').count(),1,'the whole article is submitted together')}
 async function speedMenu(buttonSelector='[data-action="speed"]'){
  const control=page.locator(buttonSelector).first();
  const rate=await page.locator('#audio').evaluate(a=>a.playbackRate);
@@ -220,17 +221,17 @@ try{
  await click('[data-action="nav"][data-route="library"]');
  await openLibraryArticle(page,'listenly-original','library');
  await click('[data-action="mode"][data-mode="exam"]');
- await submit('B');
- assert.equal(Object.values((await saved()).dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),1,'one of two submitted questions does not complete an article');
+ await choose(0,'B');
+ assert.equal(Object.values((await saved()).dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),1,'one of two selected questions does not complete an article');
  await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');
  assert.equal(await numberStat('today-articles'),1,'partial quiz leaves today article statistic unchanged');
  assert.equal(await page.locator('.history-row').count(),0,'partial quiz stays out of recent practice');
  await click('[data-action="nav"][data-route="library"]');await openLibraryArticle(page,'listenly-original','library');await click('[data-action="mode"][data-mode="exam"]');
- await click('[data-action="next-question"]');await submit('A');
+ await choose(1,'A');await submitArticle();
  assert.equal(Object.values((await saved()).dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),2,'the final submission credits one completed article without requiring a result-page visit');
- await click('[data-action="next-question"]');await page.locator('.result-card').waitFor();await click('[data-action="restart-quiz"]');await submit('B');
+ await click('[data-action="view-result"]');await page.locator('.result-card').waitFor();await click('[data-action="restart-quiz"]');await choose(0,'B');
  assert.equal(Object.values((await saved()).dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),2,'partial redo retains previous completion but does not add another');
- await click('[data-action="next-question"]');await submit('A');
+ await choose(1,'A');await submitArticle();
  const afterRepeating=await saved();assert.equal(Object.values(afterRepeating.dailyQuestions[dateKeys.today]).reduce((a,n)=>a+n,0),7,'repeating all questions adds activity without erasing earlier submissions');
  assert.equal(Object.values(afterRepeating.dailyArticles[dateKeys.today]).reduce((a,n)=>a+n,0),3,'a fully completed redo adds one article completion');
  assert.equal(afterRepeating.articleCompletions[JSON.stringify(['listenly-original','library'])].count,2,'the completed article record tracks the two full attempts');
@@ -323,7 +324,7 @@ try{
  await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>.2});
  await page.waitForFunction(()=>{const a=document.querySelector('#audio');return a.ended&&a.paused});
  const fullListening=await saved();assert.ok(fullListening.completedListeningDays[dateKeys.today]>181,'a full recording genuinely played from start to ended credits its listening time');
- await click('[data-action="mode"][data-mode="exam"]');assert.match(await page.locator('.quiz-top').innerText(),/第\s*5\s*题/,'cleaning material titles preserves the original question number inside the quiz');
+ await click('[data-action="mode"][data-mode="exam"]');assert.match(await page.locator('[data-action="toggle-question"]').first().innerText(),/第\s*5\s*题/,'cleaning material titles preserves the original question number inside the quiz');
  await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');
  assert.equal(await numberStat('today-listening-minutes'),3,'completed listening displays floor minutes while preserving the newly credited seconds');
  assert.equal(await numberStat('today-articles'),3,'audio completion and reload do not add quiz article completions');

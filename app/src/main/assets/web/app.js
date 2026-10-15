@@ -15,6 +15,7 @@ normalizeActivity(state);
 let papers=[],currentAudioKey='',loop=false,currentSentence=-1,importMode='intensive',quizResult=false,lastPlaybackTick=0,toastTimer,busy=false;
 let speedMenu=null;
 let libraryPaperId=null,listeningAnchor=null;
+let openQuestionIndex=-1;
 const libraryFilters={search:'',year:'',kind:'all'};
 const transientUrls=new Set();
 const paperId=()=>state.active?.paper;
@@ -44,7 +45,7 @@ function settleListeningCoverage(flush=false){
 function persist(){try{localStorage.setItem(storageKey,JSON.stringify(state))}catch{toast('存储空间不足，请导出学习记录。')}}
 function toast(message){const el=document.querySelector('#toast');el.textContent=message;el.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('visible'),3500)}
 function nav(route){settleListeningCoverage(true);settleStudyClock();savePosition();if(route!=='practice')audio.pause();state.route=route;if(route==='library')libraryPaperId=null;quizResult=false;render();settleStudyClock();window.scrollTo(0,0)}
-function selectMaterial(p,a){settleListeningCoverage(true);settleStudyClock();savePosition();if(state.route!=='practice'){if(state.mode==='exam'&&state.active?.paper===p&&state.active?.article===a)switchMode('intensive');else state.mode='intensive';state.display='hidden'}state.active={paper:p,article:a};state.selectedPaper=p;state.route='practice';quizResult=false;loop=false;currentSentence=-1;persist();render();setAudio();settleStudyClock();window.scrollTo(0,0)}
+function selectMaterial(p,a){settleListeningCoverage(true);settleStudyClock();savePosition();if(state.route!=='practice'){if(state.mode==='exam'&&state.active?.paper===p&&state.active?.article===a)switchMode('intensive');else state.mode='intensive';state.display='hidden'}state.active={paper:p,article:a};state.selectedPaper=p;state.route='practice';quizResult=false;openQuestionIndex=state.mode==='exam'?qIndex():-1;loop=false;currentSentence=-1;persist();render();setAudio();settleStudyClock();window.scrollTo(0,0)}
 async function playAtHome(p,a){settleListeningCoverage(true);settleStudyClock();savePosition();const same=state.active?.paper===p&&state.active?.article===a;if(same&&state.mode==='exam')switchMode('intensive',false);else if(!same){audio.pause();state.active={paper:p,article:a};state.mode='intensive'}state.selectedPaper=p;state.display='hidden';loop=false;currentSentence=-1;setAudio();persist();if(!same)render();await togglePlay();settleStudyClock()}
 function choosePaper(p,open=false){if(!papers.some(paper=>paper.id===p))return;state.selectedPaper=p;if(open)libraryPaperId=p;persist();render();window.scrollTo(0,0)}
 function libraryBack(){libraryPaperId=null;render();window.scrollTo(0,0)}
@@ -60,7 +61,7 @@ function setAudio(mappedTime){const url=sourceAudio();const key=audioKey();if(!u
 }
 function reveal(element){if(!element||window.matchMedia('(prefers-reduced-motion: reduce)').matches||typeof element.animate!=='function')return;try{element.animate([{opacity:.82},{opacity:1}],{duration:140,easing:'cubic-bezier(.2,.8,.2,1)'})}catch{}}
 function restoreIndicator(selector,transform){const control=document.querySelector(selector);if(control&&transform&&transform!=='none'){control.style.setProperty('--segment-from-transform',transform);control.classList.add('is-moving')}}
-function switchMode(mode,updateView=true){if(state.mode===mode)return;settleListeningCoverage(true);settleStudyClock();const previousControl=document.querySelector('.mode-control'),previousTransform=previousControl?getComputedStyle(previousControl,'::before').transform:null;const oldArticle=getArticle(),oldQ=getQuestion(),previous=state.mode,oldTime=audio.currentTime;const oldUrl=sourceAudio();savePosition();state.mode=mode;quizResult=false;loop=false;currentSentence=-1;persist();if(updateView){render();const control=document.querySelector('.mode-control');if(control&&previousTransform&&previousTransform!=='none'){control.style.setProperty('--segment-from-transform',previousTransform);control.classList.add('is-moving')}reveal(document.querySelector('.main-panel>div'))}if(state.active&&getArticle()){
+function switchMode(mode,updateView=true){if(state.mode===mode)return;settleListeningCoverage(true);settleStudyClock();const previousControl=document.querySelector('.mode-control'),previousTransform=previousControl?getComputedStyle(previousControl,'::before').transform:null;const oldArticle=getArticle(),oldQ=getQuestion(),previous=state.mode,oldTime=audio.currentTime;const oldUrl=sourceAudio();savePosition();state.mode=mode;quizResult=false;openQuestionIndex=mode==='exam'?qIndex():-1;loop=false;currentSentence=-1;persist();if(updateView){render();const control=document.querySelector('.mode-control');if(control&&previousTransform&&previousTransform!=='none'){control.style.setProperty('--segment-from-transform',previousTransform);control.classList.add('is-moving')}reveal(document.querySelector('.main-panel>div'))}if(state.active&&getArticle()){
   let mapped;if(oldUrl&&oldUrl===sourceAudio())mapped=oldTime;
   else if(previous==='exam'&&oldQ?.audioUrl&&oldQ.audioTimeline)mapped=mapAudioTime(oldTime,oldQ.audioTimeline);
   else if(mode==='exam'&&getQuestion()?.audioUrl&&getQuestion().audioTimeline)mapped=mapAudioTime(oldTime,getQuestion().audioTimeline,'articleToClip');
@@ -126,11 +127,36 @@ function playback(){
   const article=getArticle(),timed=article?.transcript?.some(r=>r.timed!==false&&r.start>0);
   return `<footer class="playback-card" aria-label="音频播放"><div class="player-progress"><span id="current-time">00:00</span><input class="seekbar" id="seek" type="range" min="0" max="${article?.duration||100}" value="0" step=".1" aria-label="播放进度" ${sourceAudio()?'':'disabled'}><span id="duration-time">${formatTime(article?.duration)}</span></div><div class="player-buttons">${speedControl()}<button class="skip-btn" data-action="seek-relative" data-seconds="-5" aria-label="后退5秒">${icon('rewind')}<span>5</span></button><button class="big-play" data-action="play" aria-label="${audio.paused?'播放':'暂停'}" ${sourceAudio()?'':'disabled'}>${icon(audio.paused?'play':'pause')}</button><button class="skip-btn" data-action="seek-relative" data-seconds="5" aria-label="前进5秒">${icon('forward')}<span>5</span></button><button class="loop-btn ${loop?'active':''}" data-action="loop" aria-label="单句循环" aria-pressed="${loop}" ${state.mode==='exam'||!timed?'disabled':''}>${icon('repeat')}</button></div><p id="audio-error" class="playback-error" ${sourceAudio()?'hidden':''}>缺少音频</p></footer>`;
 }
+const hasChoice=q=>q.options.some(option=>option.id===getAnswer(q)?.choice);
 function quiz(){
-  const qs=questions(),q=getQuestion();
-  if(!q)return `<div class="quiz-card"><div class="empty"><p>暂无题目</p><button class="text-btn" data-action="import">导入做题材料 ${icon('plus')}</button></div></div>`;
-  const answer=getAnswer(q);
-  return `<div class="quiz-card"><div class="quiz-top"><span>第 ${esc(q.number??qIndex()+1)} 题</span><span>${qIndex()+1} / ${qs.length}</span></div><h3>${esc(q.prompt||'Listen and choose the best answer.')}</h3><div class="options">${q.options.map(o=>{let cls=answer?.choice===o.id?'selected':'';if(answer?.submitted&&q.answer){if(o.id===q.answer)cls='correct';else if(o.id===answer.choice)cls='wrong'}return `<button class="option ${cls}" data-action="answer" data-option="${esc(o.id)}" ${answer?.submitted?'disabled':''} aria-pressed="${answer?.choice===o.id}"><span class="letter">${esc(o.id)}</span><span>${esc(o.text)}</span>${answer?.submitted&&q.answer===o.id?icon('check'):''}</button>`}).join('')}</div>${answer?.submitted?`<div class="feedback ${q.answer&&answer.choice!==q.answer?'wrong':''}"><strong>${q.answer?(answer.choice===q.answer?'答对了':`答案是 ${esc(q.answer)}`):'已记录 · 无标准答案'}</strong>${q.explanation?`<p>${esc(q.explanation)}</p>`:''}<button class="text-btn" data-action="mode" data-mode="intensive">${icon('headphones')}精听复盘</button></div>`:''}<div class="quiz-actions"><div class="question-dots">${qs.map((item,i)=>`<button class="question-dot ${i===qIndex()?'current':''} ${getAnswer(item)?.submitted?'answered':''}" data-action="question" data-index="${i}" aria-label="第${i+1}题">${i+1}</button>`).join('')}</div><button class="primary-btn" data-action="${answer?.submitted?'next-question':'submit-answer'}" ${!answer?.choice?'disabled':''}>${answer?.submitted?(qIndex()===qs.length-1?'查看结果':'下一题'):'提交答案'} ${icon(answer?.submitted?'chevron':'check')}</button></div></div>`;
+  const qs=questions();
+  if(!qs.length)return `<div class="quiz-card"><div class="empty"><p>暂无题目</p><button class="text-btn" data-action="import">导入做题材料 ${icon('plus')}</button></div></div>`;
+  const chosen=qs.filter(hasChoice).length,done=qs.filter(q=>getAnswer(q)?.submitted).length,complete=done===qs.length;
+  return `<div class="quiz-card"><div class="quiz-summary" aria-live="polite"><span>${complete?'已完成':'已选'} ${complete?done:chosen} / ${qs.length}</span></div><div class="quiz-questions">${qs.map((q,i)=>{
+    const answer=getAnswer(q),option=q.options.find(o=>o.id===answer?.choice),open=i===openQuestionIndex,graded=answer?.submitted&&q.answer,status=graded?(answer.choice===q.answer?'correct':'wrong'):'';
+    const feedback=answer?.submitted?(q.answer?(status==='correct'?'答对了':`答案 ${q.answer}`):'已记录 · 无标准答案'):'';
+    return `<section class="quiz-question ${open?'is-open':''}" data-question-id="${esc(q.id)}" data-question-index="${i}"><button class="question-toggle" data-action="toggle-question" data-index="${i}" aria-expanded="${open}" aria-controls="question-options-${i}"><span class="question-number">第 ${esc(q.number??i+1)} 题</span><span class="question-selection ${option?'':'is-placeholder'}">${option?`${esc(option.id)}. ${esc(option.text)}`:'选择答案'}</span><span class="question-state ${status?'is-'+status:''}" aria-label="${esc(feedback)}">${answer?.submitted?icon(status==='wrong'?'close':'check'):''}</span><span class="question-chevron">${icon('chevron')}</span></button><div id="question-options-${i}" class="question-options-wrap" aria-hidden="${!open}"><div class="question-options">${q.options.map(o=>{
+      let cls=answer?.choice===o.id?'selected':'';
+      if(graded){if(o.id===q.answer)cls='correct';else if(o.id===answer.choice)cls='wrong'}
+      return `<button class="option ${cls}" data-action="answer" data-index="${i}" data-option="${esc(o.id)}" ${answer?.submitted||!open?'disabled':''} aria-pressed="${answer?.choice===o.id}"><span class="letter">${esc(o.id)}</span><span>${esc(o.text)}</span>${graded&&q.answer===o.id?icon('check'):''}</button>`;
+    }).join('')}${feedback?`<div class="question-feedback ${status}">${esc(feedback)}</div>${q.explanation?`<div class="question-explanation">${esc(q.explanation)}</div>`:''}`:''}</div></div></section>`;
+  }).join('')}</div><div class="quiz-actions">${complete?`<button class="text-btn" data-action="restart-quiz">重新练习</button><button class="text-btn" data-action="mode" data-mode="intensive">精听复盘</button><button class="primary-btn" data-action="view-result">查看结果 ${icon('chevron')}</button>`:`<button class="primary-btn" data-action="submit-article" ${chosen===qs.length?'':'disabled'}>提交本篇 ${icon('check')}</button>`}</div></div>`;
+}
+// Keep accordion nodes in place so expansion follows the tap and playback is uninterrupted.
+function refreshQuiz(focusIndex){
+  const current=document.querySelector('.quiz-card');if(!current)return;
+  const holder=document.createElement('div');holder.innerHTML=quiz();const next=holder.firstElementChild;
+  current.querySelector('.quiz-summary').innerHTML=next.querySelector('.quiz-summary').innerHTML;
+  current.querySelectorAll('.quiz-question').forEach((row,i)=>{
+    const replacement=next.querySelectorAll('.quiz-question')[i],toggle=row.querySelector('.question-toggle'),wrap=row.querySelector('.question-options-wrap');
+    toggle.innerHTML=replacement.querySelector('.question-toggle').innerHTML;
+    toggle.setAttribute('aria-expanded',String(i===openQuestionIndex));
+    wrap.setAttribute('aria-hidden',String(i!==openQuestionIndex));
+    wrap.firstElementChild.innerHTML=replacement.querySelector('.question-options').innerHTML;
+    row.classList.toggle('is-open',i===openQuestionIndex);
+  });
+  current.querySelector('.quiz-actions').innerHTML=next.querySelector('.quiz-actions').innerHTML;
+  if(Number.isInteger(focusIndex))current.querySelectorAll('.question-toggle')[focusIndex]?.focus({preventScroll:true});
 }
 function result(){
   const qs=questions(),submitted=qs.filter(q=>getAnswer(q)?.submitted),known=submitted.filter(q=>q.answer),correct=known.filter(q=>getAnswer(q).choice===q.answer).length;
@@ -140,7 +166,7 @@ function result(){
 }
 function practice(){
   const article=getArticle();if(!article){state.route='home';return home()}
-  const readerKey=JSON.stringify([state.active.paper,state.active.article,state.mode,state.mode==='exam'?qIndex():null,quizResult]);
+  const readerKey=JSON.stringify([state.active.paper,state.active.article,state.mode,quizResult]);
   return `<header class="practice-header"><button class="icon-btn" data-action="nav" data-route="home" aria-label="返回听力">${icon('back')}</button><button class="practice-title" data-action="article-list" aria-label="选择文章"><h1>${esc(materialTitle(article.title))}</h1>${icon('chevron')}</button><button class="icon-btn" data-action="nav" data-route="library" aria-label="资料库">${icon('book')}</button><button class="icon-btn bookmark ${state.bookmarks.includes(materialKey())?'active':''}" data-action="bookmark" aria-pressed="${state.bookmarks.includes(materialKey())}" aria-label="${state.bookmarks.includes(materialKey())?'取消收藏':'收藏文章'}">${icon('bookmark')}</button></header><div class="practice-top">${modeControl()}${state.mode==='intensive'?`<div class="display-controls" data-current="${state.display}" role="group" aria-label="原文显示方式">${[['hidden','隐藏'],['original','原文'],['bilingual','双语']].map(([m,t])=>`<button class="${state.display===m?'active':''}" data-action="display" data-display="${m}" aria-pressed="${state.display===m}">${t}</button>`).join('')}</div>`:''}</div><div class="workspace-grid"><div class="main-panel" data-reader-key="${esc(readerKey)}" data-reader-display="${state.mode==='intensive'?state.display:'exam'}" tabindex="0" aria-label="${state.mode==='intensive'?'文章正文':'题目'}">${state.mode==='intensive'?transcript():quizResult?result():quiz()}</div></div>${playback()}`;
 }
 function filteredArticles(paper){return paper.articles.filter(article=>(!libraryFilters.search||`${paper.title} ${materialTitle(article.title)} ${paper.year||''}`.toLowerCase().includes(libraryFilters.search.toLowerCase()))&&(libraryFilters.kind!=='saved'||state.bookmarks.includes(keyFor(paper.id,article.id))))}
@@ -212,7 +238,7 @@ async function togglePlay(){const url=sourceAudio(),key=audioKey();if(!url){toas
     toast('播放失败，点播放重试');
   }
 }
-function setQuestion(i){settleListeningCoverage(true);const previous=getQuestion();savePosition();state.questionIndices[materialKey()]=Math.min(Math.max(i,0),Math.max(0,questions().length-1));quizResult=false;persist();render();if(previous?.audioUrl||getQuestion()?.audioUrl)setAudio();else{resetListeningAnchor();updatePlayer()}}
+function setQuestion(i){if(!Number.isInteger(i)||!questions()[i])return;settleListeningCoverage(true);const previous=getQuestion(),changed=i!==qIndex();savePosition();state.questionIndices[materialKey()]=i;quizResult=false;openQuestionIndex=i;persist();if(document.querySelector('.quiz-card'))refreshQuiz(i);else render();if(changed&&(previous?.audioUrl||getQuestion()?.audioUrl))setAudio();else{resetListeningAnchor();updatePlayer()}}
 function downloadRecord(){const text=JSON.stringify({version:1,exportedAt:new Date().toISOString(),state},null,2);if(window.Android?.exportText){window.Android.exportText('listenly-progress.json',text);return}const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='listenly-progress.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 function dialog(html){document.querySelector('.dialog-shade')?.remove();const el=document.createElement('div');el.className='dialog-shade';el.innerHTML=`<section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">${html}</section>`;app.append(el);el.querySelector('button')?.focus()}
 function importDialog(){dialog(`<div class="dialog-top"><h2 id="dialog-title">导入材料</h2><button class="icon-btn" data-action="close-dialog" aria-label="关闭">${icon('close')}</button></div><button class="import-choice" data-action="choose-folder" data-mode="intensive">${icon('headphones')}<div><strong>精听文件夹</strong><span>音频 · 原文 · 翻译</span></div>${icon('chevron')}</button><button class="import-choice" data-action="choose-folder" data-mode="exam">${icon('quiz')}<div><strong>做题文件夹</strong><span>套卷 · 分题音频 · 题目选项</span></div>${icon('chevron')}</button><details class="format-details"><summary>文件格式与编号</summary><p class="format-note">音频：MP3 / M4A / WAV / OGG<br>文本：JSON / TXT / SRT / LRC<br>通过 paper.json 中相同的套卷与文章编号合并两种模式。</p></details>`)}
@@ -248,10 +274,10 @@ app.addEventListener('click',async event=>{const button=event.target.closest('[d
   case 'sentence':{const row=getArticle()?.transcript[Number(button.dataset.index)];if(row?.timed!==false){settleListeningCoverage(true);audio.currentTime=row.start;currentSentence=Number(button.dataset.index);await togglePlayIfPaused()}break}
   case 'loop':loop=!loop;button.classList.toggle('active',loop);button.setAttribute('aria-pressed',String(loop));toast(loop?'单句循环已开启':'单句循环已关闭');break;
   case 'bookmark':{const key=materialKey();state.bookmarks=state.bookmarks.includes(key)?state.bookmarks.filter(k=>k!==key):[...state.bookmarks,key];persist();button.classList.toggle('active',state.bookmarks.includes(key));button.setAttribute('aria-pressed',String(state.bookmarks.includes(key)));button.setAttribute('aria-label',state.bookmarks.includes(key)?'取消收藏':'收藏文章');break}
-  case 'answer':state.answers[answerKey(getQuestion())]={choice:button.dataset.option,submitted:false};persist();render();break;
-  case 'submit-answer':{const answer=getAnswer(getQuestion());if(answer?.choice&&!answer.submitted){answer.submitted=true;answer.at=Date.now();recordQuestionSubmission(state,answerKey(getQuestion()),answer.at);recordArticleCompletion(state,paperId(),getArticle(),answer.at);persist();render();reveal(document.querySelector('.feedback'))}break}
-  case 'next-question':if(qIndex()<questions().length-1)setQuestion(qIndex()+1);else{quizResult=true;audio.pause();savePosition();render()}break;
-  case 'question':setQuestion(Number(button.dataset.index));break;
+  case 'toggle-question':{const index=Number(button.dataset.index);if(openQuestionIndex===index){openQuestionIndex=-1;refreshQuiz(index)}else setQuestion(index);break}
+  case 'answer':{const index=Number(button.dataset.index),q=questions()[index];if(q&&!getAnswer(q)?.submitted&&q.options.some(o=>o.id===button.dataset.option)){state.answers[answerKey(q)]={choice:button.dataset.option,submitted:false};openQuestionIndex=-1;persist();refreshQuiz(index)}break}
+  case 'submit-article':{const qs=questions();if(qs.length&&qs.every(hasChoice)&&qs.some(q=>!getAnswer(q)?.submitted)){const at=Date.now();for(const q of qs){const answer=getAnswer(q);if(!answer.submitted){answer.submitted=true;answer.at=at;recordQuestionSubmission(state,answerKey(q),at)}}recordArticleCompletion(state,paperId(),getArticle(),at);openQuestionIndex=-1;persist();refreshQuiz();document.querySelector('[data-action="view-result"]')?.focus({preventScroll:true})}break}
+  case 'view-result':if(questions().length&&questions().every(q=>getAnswer(q)?.submitted)){quizResult=true;settleListeningCoverage(true);audio.pause();savePosition();render()}break;
   case 'restart-quiz':for(const q of questions())delete state.answers[answerKey(q)];setQuestion(0);break;
   case 'import':importDialog();break;
   case 'close-dialog':document.querySelector('.dialog-shade')?.remove();break;
@@ -261,7 +287,7 @@ app.addEventListener('click',async event=>{const button=event.target.closest('[d
 async function togglePlayIfPaused(){if(audio.paused)await togglePlay()}
 app.addEventListener('input',event=>{if(event.target.id==='seek'&&Number.isFinite(audio.duration)){settleListeningCoverage(true);audio.currentTime=Number(event.target.value);savePosition();updatePlayer()}if(event.target.id==='search'){libraryFilters.search=event.target.value;filterLibrary()}});
 app.addEventListener('change',event=>{if(['year-filter','kind-filter'].includes(event.target.id))filterLibrary()});
-app.addEventListener('keydown',event=>{if(event.key==='Escape')document.querySelector('.dialog-shade')?.remove()});
+app.addEventListener('keydown',event=>{if(event.key==='Escape'){const overlay=document.querySelector('.dialog-shade');if(overlay){overlay.remove();return}if(openQuestionIndex>=0&&state.mode==='exam'&&!quizResult){const index=openQuestionIndex;openQuestionIndex=-1;refreshQuiz(index)}}});
 document.addEventListener('keydown',event=>{
   if(!speedMenu)return;
   if(event.key==='Escape'){event.preventDefault();closeSpeedMenu();return}
