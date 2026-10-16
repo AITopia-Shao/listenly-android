@@ -98,11 +98,16 @@ try{
    const selector=`[data-action=toggle-question][data-index="${index}"]`;
    await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
    if(!await evaluate(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='true'`))await tap(selector);
-   await poll(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='true'&&document.querySelectorAll('.quiz-question.is-open').length===1`);await wait(220);
+   await poll(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='true'`);await wait(220);
   };
   await showQuestion(0);await poll('document.querySelector("#audio").readyState>=1');
   const first=await playAndProgress(),before=await snapshot(),nextIndex=article.questions.length>1?1:0;
-  if(nextIndex!==0)await showQuestion(nextIndex);
+  let independentDropdowns;
+  if(nextIndex!==0){
+   await showQuestion(nextIndex);
+   independentDropdowns=await evaluate('[...document.querySelectorAll(".quiz-question.is-open")].map(row=>Number(row.dataset.questionIndex))');
+   assert.ok(independentDropdowns.includes(0)&&independentDropdowns.includes(nextIndex),'Opening another option dropdown leaves the first expanded');
+  }
   else{
    await tap('[data-action=toggle-question][data-index="0"]');
    await poll('document.querySelectorAll(".quiz-question.is-open").length===0');await wait(220);await showQuestion(0);
@@ -119,14 +124,19 @@ try{
   }
   assert.equal(after.error,null,'Dropdown interaction leaves native media error-free');
   await pause();
-  const selector=`[data-action=toggle-question][data-index="${nextIndex}"]`;
-  await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await tap(selector);
+  const expanded=await evaluate('[...document.querySelectorAll(".quiz-question.is-open")].map(row=>Number(row.dataset.questionIndex))');
+  for(const index of expanded){
+   const selector=`[data-action=toggle-question][data-index="${index}"]`;
+   await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await tap(selector);
+   await poll(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='false'`);await wait(220);
+   if(index!==nextIndex&&expanded.includes(nextIndex))assert.equal(await evaluate(`document.querySelector('[data-action=toggle-question][data-index="${nextIndex}"]').getAttribute('aria-expanded')`),'true','Collapsing one question preserves the other open question');
+  }
   await poll('document.querySelectorAll(".quiz-question.is-open").length===0');await wait(220);
   const geometry=await evaluate('(()=>{var p=document.querySelector(".main-panel").getBoundingClientRect(),rows=[...document.querySelectorAll(".quiz-question")].map(b=>{var r=b.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}});return {panel:{left:p.left,right:p.right,top:p.top,bottom:p.bottom},rows:rows}})()');
   for(const row of geometry.rows)assert.ok(row.left>=geometry.panel.left-1&&row.right<=geometry.panel.right+1&&row.top>=geometry.panel.top-1&&row.bottom<=geometry.panel.bottom+1,'The collapsed whole-article question list fits above the audio dock');
   await tap('[data-action=mode][data-mode=intensive]');await poll('document.querySelector(".transcript-card")&&document.querySelector("#audio").readyState>=1');
   const returned=await snapshot();assert.equal(returned.error,null,'Returning from the complete question list retains playable article audio');
-  return {questionCount:article.questions.length,nextIndex,first,before,selected,after,clipPlayback,geometry,returned};
+  return {questionCount:article.questions.length,nextIndex,independentDropdowns:independentDropdowns||{status:'not-applicable',reason:'This fixture has only one question'},first,before,selected,after,clipPlayback,geometry,returned};
  });
  // The original demo has timestamps, unlike the real untimed CET article used above.
  if(!fixture)await scenario('timed-sentence-loop',async()=>{await evaluate('window.listenlyBack();document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original]").click();document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click()');await poll('document.querySelector("#audio").readyState>=1');await tap('[data-action=display][data-display=bilingual]');await pause();await evaluate('document.querySelector("#audio").currentTime=0');await tap('[data-action=sentence][data-index="0"]');await poll('!document.querySelector("#audio").paused');await tap('[data-action=loop]');const next=await evaluate('Number(document.querySelector(\'.sentence[data-index="1"] .timestamp\').textContent.split(":").reduce((v,n)=>v*60+Number(n),0))');await evaluate(`document.querySelector('#audio').currentTime=${next-.3}`);await poll(`document.querySelector('#audio').currentTime<${next-1}`);const looped=await snapshot();assert.equal(looped.error,null);assert.equal(looped.paused,false);await tap('[data-action=loop]');await pause();return {boundary:next,looped}});

@@ -37,6 +37,9 @@ class PublicDemoAssetTests(unittest.TestCase):
             web = output / "assets" / "web"
             actual = {path.relative_to(web).as_posix() for path in web.rglob("*") if path.is_file()}
             expected = set(assets.WEB_FILES) | {"app.compat.js", "demo.json", "bundled-library.json", "media/morning.wav", "media/library.wav"}
+            for filename in assets.FONT_FILES:
+                expected.add(f'fonts/{filename}')
+                self.assertEqual((web / 'fonts' / filename).read_bytes(), (ROOT / 'app' / 'src' / 'main' / 'assets' / 'web' / 'fonts' / filename).read_bytes())
             if (ROOT / "app" / "src" / "main" / "assets" / "web" / "compat-polyfills.js").is_file():
                 expected.add("compat-polyfills.js")
             if any((ROOT / filename).is_file() for filename in ("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.txt", "THIRD_PARTY_NOTICES")):

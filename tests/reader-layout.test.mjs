@@ -205,11 +205,13 @@ export async function verifyReaderScrollAndArticleMenu(page){
  assert.ok(firstBounds.y>=panelBounds.y-1&&firstBounds.y+firstBounds.height<=panelBounds.y+panelBounds.height+1,'the selected question stays reachable after long options collapse');
  const submit=page.locator('[data-action="submit-article"]');
  assert.equal(await submit.isDisabled(),true,'the article cannot be submitted while another question is unanswered');
+ await firstToggle.click();
  const second=page.locator('.quiz-question[data-question-index="1"]');
  await second.locator('[data-action="toggle-question"]').click();
- assert.equal(await firstToggle.getAttribute('aria-expanded'),'false','opening another question keeps the previous one collapsed');
+ assert.equal(await firstToggle.getAttribute('aria-expanded'),'true','opening another question preserves the expanded long-option question');
  await second.locator('[data-action="answer"][data-option="A"]').click();
  assert.equal(await second.locator('[data-action="toggle-question"]').getAttribute('aria-expanded'),'false','each selection closes its own dropdown');
+ assert.equal(await firstToggle.getAttribute('aria-expanded'),'true','choosing another answer leaves the expanded long options intact');
  assert.equal(await submit.isDisabled(),false,'all selected answers enable whole-article submission');
  await submit.scrollIntoViewIfNeeded();
  const submitTop=await page.locator('.main-panel').evaluate(panel=>panel.scrollTop);

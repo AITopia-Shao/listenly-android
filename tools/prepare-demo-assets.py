@@ -16,6 +16,7 @@ import wave
 ROOT = Path(__file__).resolve().parents[1]
 WEB_FILES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js")
 OPTIONAL_WEB_FILES = ("app.compat.js", "compat-polyfills.js")
+FONT_FILES = ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md")
 
 
 def original_example_files() -> tuple[dict, list[Path]]:
@@ -64,6 +65,9 @@ def prepare(output: Path) -> None:
     for filename in web_files:
         if not (source_web / filename).is_file():
             raise FileNotFoundError(f"Missing application source: {filename}")
+    for filename in FONT_FILES:
+        if not (source_web / 'fonts' / filename).is_file():
+            raise FileNotFoundError(f"Missing licensed offline font: {filename}")
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
@@ -74,6 +78,9 @@ def prepare(output: Path) -> None:
     (web / "media").mkdir(parents=True)
     for filename in web_files:
         shutil.copyfile(source_web / filename, web / filename)
+    (web / 'fonts').mkdir()
+    for filename in FONT_FILES:
+        shutil.copyfile(source_web / 'fonts' / filename, web / 'fonts' / filename)
     (web / "demo.json").write_text(json.dumps(demo, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     for recording in audio_files:
         shutil.copyfile(recording, web / "media" / recording.name)

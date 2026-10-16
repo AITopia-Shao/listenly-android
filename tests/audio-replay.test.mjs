@@ -50,6 +50,7 @@ await page.addInitScript(()=>{
 const server=await startPreview(0,webRoot);
 const base=`http://127.0.0.1:${server.address().port}`;
 const click=selector=>page.locator(selector).first().click();
+async function activateQuestion(index){const toggle=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await toggle.getAttribute('aria-expanded')==='true')await toggle.click();await toggle.click()}
 const snapshot=()=>page.locator('#audio').evaluate(audio=>({src:audio.getAttribute('src'),currentSrc:audio.currentSrc,time:audio.currentTime,duration:audio.duration,readyState:audio.readyState,networkState:audio.networkState,seeking:audio.seeking,paused:audio.paused,ended:audio.ended,error:audio.error?{code:audio.error.code,message:audio.error.message}:null}));
 async function record(label){const state=await snapshot();assert.equal(state.error,null,label);result.checks.push({label,state});return state}
 async function metadata(){await page.waitForFunction(()=>{const a=document.querySelector('#audio');return a.readyState>=1&&Number.isFinite(a.duration)&&a.duration>1&&!a.seeking},{},{timeout:15000})}
@@ -227,7 +228,7 @@ try{
     await open(timed.id,'conversation-01');await seek(10);await play('M4A timed article');await pause();
     await click('[data-action="mode"][data-mode="exam"]');await metadata();assert.match((await snapshot()).src,/-q09\.m4a$/);await play('M4A genuine cut question');await pause();await finishAndReplay('M4A cut question');
     await click('[data-action="toggle-question"][data-index="1"]');await metadata();assert.match((await snapshot()).src,/-q10\.m4a$/);await play('M4A next cut question');await pause();
-    await click('[data-action="toggle-question"][data-index="0"]');await metadata();await play('M4A return to previous cut question');await pause();
+    await activateQuestion(0);await metadata();assert.match((await snapshot()).src,/-q09\.m4a$/);await play('M4A return to previous cut question');await pause();
     await click('[data-action="mode"][data-mode="intensive"]');await metadata();await play('M4A return to full article');await pause();
   }
   if(!args.includes('--skip-read-failure'))await transientReadFailure();

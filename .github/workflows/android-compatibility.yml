@@ -10,6 +10,7 @@ on:
       - app/src/main/assets/web/*.js
       - app/src/main/assets/web/*.html
       - app/src/main/assets/web/*.css
+      - app/src/main/assets/web/fonts/**
       - app/build.gradle
       - tools/android-smoke.mjs
       - tools/android-replay-smoke.mjs
@@ -45,6 +46,7 @@ on:
       - app/src/main/assets/web/*.js
       - app/src/main/assets/web/*.html
       - app/src/main/assets/web/*.css
+      - app/src/main/assets/web/fonts/**
       - app/build.gradle
       - tools/android-smoke.mjs
       - tools/android-replay-smoke.mjs

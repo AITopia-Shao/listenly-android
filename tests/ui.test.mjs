@@ -23,11 +23,13 @@ async function openQuestion(index){const control=page.locator(`[data-action="tog
 async function choose(index,option){await openQuestion(index);await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${option}"]`)}
 try{
  await page.goto(url);await page.locator('.focus-card').waitFor();
+ assert.equal(await page.locator('[data-action="theme"],[data-action="import"]').count(),0,'home keeps global appearance and import actions on profile');
  assert.doesNotMatch(await page.locator('#app').innerText(),/每一句，都听懂|放慢一点，让英语慢慢清晰|每份材料，都是下一次进步的开始/,'home removes decorative slogans');
  assert.equal(await page.locator('.brand').count(),0,'home has no oversized brand header');
  await page.screenshot({path:path.join(root,'dist/home-phone.png'),fullPage:true});
  // Open the original sample rather than depending on the bundled-paper order.
  await click('[data-action="nav"][data-route="library"]');
+ assert.equal(await page.locator('[data-action="theme"],[data-action="import"]').count(),0,'library keeps global appearance and import actions on profile');
  assert.doesNotMatch(await page.locator('#app').innerText(),/听力资料库|每份材料，都是下一次进步的开始/,'library removes redundant headings');
  await openLibraryArticle(page,'listenly-original','morning');
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);

@@ -35,10 +35,13 @@ const audioState=()=>page.locator('#audio').evaluate(a=>({time:a.currentTime,src
 function pass(label,details){result.checks.push({label,...(details?{details}:{})})}
 async function checkOutsideReader(route){
  assert.equal(await page.locator('[data-action="mode"]').count(),0,`${route} exposes no training mode selector`);
- assert.equal(await page.locator('.theme-control [data-action="theme"]').count(),2,`${route} has light/dark controls`);
+ const profile=route==='profile';
+ assert.equal(await page.locator('.theme-control [data-action="theme"]').count(),profile?2:0,`${route} only exposes appearance controls on profile`);
+ assert.equal(await page.locator('[data-action="import"]').count(),profile?1:0,`${route} only exposes folder import on the profile top bar`);
  assert.equal(await page.locator('.bottom-nav').count(),1,`${route} has bottom navigation`);
- pass(`${route}: theme controls replace training modes`);
+ pass(`${route}: training controls are absent and global settings only appear on profile`);
 }
+async function setTheme(theme,returnRoute='home'){await click('[data-action="nav"][data-route="profile"]');await click(`[data-action="theme"][data-theme="${theme}"]`);if(returnRoute!=='profile')await click(`[data-action="nav"][data-route="${returnRoute}"]`)}
 async function checkDefaultReader(){
  assert.equal(await page.locator('[data-mode="intensive"][aria-pressed="true"]').count(),1,'entering reader defaults to intensive');
  assert.equal(await page.locator('[data-display="hidden"][aria-pressed="true"]').count(),1,'entering reader defaults to hidden text');
@@ -94,7 +97,22 @@ async function importSelectionFixture(){
  if(await page.locator('[data-action="close-dialog"]').count())await click('[data-action="close-dialog"]');
 }
 try{
+ const previewOnly=await browser.newPage({viewport:{width:393,height:873},timezoneId:'Asia/Shanghai'});previewOnly.on('pageerror',error=>result.pageErrors.push(error.message));
+ await previewOnly.addInitScript(()=>{if(!localStorage.getItem('listenly.state.v1'))localStorage.setItem('listenly.state.v1',JSON.stringify({selectedPaper:'listenly-original',homeFocus:null}))});
+ await previewOnly.goto(url);await previewOnly.locator('.focus-card').waitFor();assert.equal(await previewOnly.locator('.focus-play').getAttribute('data-article'),'morning','a fresh collection initially pins its first article');
+ await previewOnly.locator('[data-action="nav"][data-route="library"]').click();await openLibraryArticle(previewOnly,'listenly-original','library');
+ assert.equal(await previewOnly.locator('#audio').evaluate(audio=>audio.paused),true,'previewing an article never starts its recording');
+ await previewOnly.locator('[data-action="nav"][data-route="home"]').click();assert.equal(await previewOnly.locator('.focus-play').getAttribute('data-article'),'morning','previewing another article before any playback preserves the first home article');
+ const previewState=await previewOnly.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));assert.deepEqual(previewState.active,{paper:'listenly-original',article:'library'});assert.equal(previewState.homeFocus,null,'previewing preserves an explicit null played focus');
+ await previewOnly.reload();await previewOnly.locator('.focus-card').waitFor();assert.equal(await previewOnly.locator('.focus-play').getAttribute('data-article'),'morning','reloading never promotes a preview when the saved played focus is explicitly null');assert.equal(await previewOnly.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')).homeFocus),null,'the explicit null played focus survives reload');await previewOnly.close();
+ const legacyFocus=await browser.newPage({viewport:{width:393,height:873},timezoneId:'Asia/Shanghai'});legacyFocus.on('pageerror',error=>result.pageErrors.push(error.message));
+ await legacyFocus.addInitScript(()=>{if(!localStorage.getItem('listenly.state.v1'))localStorage.setItem('listenly.state.v1',JSON.stringify({selectedPaper:'listenly-original',active:{paper:'listenly-original',article:'library'}}))});
+ await legacyFocus.goto(url);await legacyFocus.locator('.focus-card').waitFor();assert.equal(await legacyFocus.locator('.focus-play').getAttribute('data-article'),'library','an older saved state without a homeFocus key migrates its previous active article');await legacyFocus.close();
+ pass('an explicit null played focus survives preview and reload; only legacy states with the key absent migrate their active article');
  await page.goto(url);await page.locator('.focus-card').waitFor();
+ const fontState=await page.evaluate(async()=>{await document.fonts.ready;return {body:getComputedStyle(document.body).fontFamily,control:getComputedStyle(document.querySelector('.focus-play')).fontFamily,loaded:[...document.fonts].filter(face=>face.status==='loaded').map(face=>({family:face.family,weight:face.weight,status:face.status}))}});
+ assert.match(fontState.body,/Inter/,'the reading and interface typography uses the bundled Inter family');assert.match(fontState.control,/Inter/,'playback controls inherit the same interface type family');assert.ok(fontState.loaded.some(face=>/Inter/.test(face.family)),'the bundled offline font genuinely decodes instead of only being named as a CSS fallback');
+ pass('offline Inter typography loads and is shared by interface and playback controls',fontState);
  await checkOutsideReader('home');
  assert.equal(await page.locator('.section-header [data-action="nav"]').count(),0,'home has no redundant all-materials entry');
  assert.doesNotMatch(await page.locator('.section-header').innerText(),/全部/);
@@ -106,20 +124,25 @@ try{
  assert.equal(await page.locator('.practice-header').count(),0,'home playback does not navigate into the reader');
  assert.match(await homePlay.getAttribute('aria-label'),/暂停/);
  const start=await audioState();
- await page.evaluate(()=>window.__homeIdentity=document.querySelector('.focus-card'));
+ await click('[data-action="nav"][data-route="profile"]');await checkOutsideReader('profile');
+ const profileAudio=await audioState();
+ await page.evaluate(()=>window.__profileIdentity=document.querySelector('.profile-page')||document.querySelector('.statistics'));
  await click('[data-action="theme"][data-theme="dark"]');
- assert.ok(await page.evaluate(()=>window.__homeIdentity===document.querySelector('.focus-card')),'appearance changes keep the existing page and interaction targets');
- await page.waitForFunction(time=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>time+.2&&!a.error},start.time);
+ assert.ok(await page.evaluate(()=>window.__profileIdentity===(document.querySelector('.profile-page')||document.querySelector('.statistics'))),'appearance changes keep the existing settings page and interaction targets');
+ assert.equal((await audioState()).src,profileAudio.src,'profile appearance selection preserves the loaded recording');
+ assert.ok(Math.abs((await audioState()).time-profileAudio.time)<.05,'profile appearance selection preserves the paused recording position');
  assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
  const darkHome=await page.evaluate(()=>({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color}));
  assert.equal(darkHome.background,'rgb(0, 0, 0)','dark theme uses the requested pure-black page foundation');
  const darkInk=rgb(darkHome.color);assert.ok(darkInk[0]>darkInk[1]&&darkInk[1]>darkInk[2],'dark theme uses warm orange ink');
+ await click('[data-action="nav"][data-route="home"]');await checkOutsideReader('home');
+ await homePlay.click();await page.waitForFunction(time=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>time+.2&&!a.error},profileAudio.time);
  await page.waitForTimeout(220); // Capture the selected theme after its 180 ms thumb transition.
  await page.screenshot({path:path.join(output,'home-dark.png'),fullPage:true});
  await homePlay.click();await page.waitForFunction(()=>document.querySelector('#audio').paused);
  const paused=await audioState();await page.waitForTimeout(250);
  assert.ok(Math.abs((await audioState()).time-paused.time)<.04,'homepage audio button pauses the real recording');
- pass('home plays/pauses real audio; theme changes preserve playback',{start,paused,darkHome});
+ pass('home plays/pauses real audio; profile theme selection preserves the loaded recording and resume position',{start,profileAudio,paused,darkHome});
  const rowPlay=page.locator('.home-paper-row [data-action="home-play"]').first();
  const previousFocus=await homePlay.getAttribute('data-article');
  const rowArticle=await rowPlay.getAttribute('data-article');
@@ -133,7 +156,7 @@ try{
  await page.locator('.focus-play').click();await page.waitForFunction(()=>document.querySelector('#audio').paused);
  pass('playing a listed article immediately promotes it to the home focus without reader navigation');
  await page.reload();await page.locator('.focus-card').waitFor();assert.equal(await page.locator('html').getAttribute('data-theme'),'dark','dark theme persists on reload');
- await click('[data-action="theme"][data-theme="light"]');
+ await setTheme('light');
  const lightHome=await page.evaluate(()=>({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color}));
  assert.ok(rgb(lightHome.background).every(n=>n>235),'light theme uses a neutral white background');
  for(const value of Object.values(lightHome)){const color=rgb(value);assert.ok(Math.max(...color)-Math.min(...color)<=1,'daytime foundation uses grayscale')}
@@ -286,16 +309,21 @@ try{
  assert.equal(await page.locator('.paper-group-row').count(),1,'year selection filters paper directories');
  assert.equal(await page.locator('[data-action="open-paper"][data-paper="experience-selection"]').count(),1,'year selection retains the matching imported paper');
  const selectedControl=page.locator('[data-action="select-paper"][data-paper="experience-selection"]');
+ await selectedControl.evaluate(button=>{window.__selectionControl=button;window.__selectionRow=button.closest('.paper-group-row');window.__selectionGlyph=button.querySelector('.selection-indicator svg')});
  await selectedControl.click();assert.equal(await selectedControl.getAttribute('aria-pressed'),'true','paper selection updates its check indicator');
+ assert.ok(await selectedControl.evaluate(button=>window.__selectionControl===button&&window.__selectionRow===button.closest('.paper-group-row')&&window.__selectionGlyph===button.querySelector('.selection-indicator svg')),'selecting a suite preserves the row and indicator nodes for a continuous state transition');
  const selectedStyle=await selectedControl.evaluate(b=>({background:getComputedStyle(b).backgroundColor,outline:getComputedStyle(b).outlineStyle,shadow:getComputedStyle(b).boxShadow}));
  assert.equal(selectedStyle.background,'rgba(0, 0, 0, 0)','the selection glyph has no colored rectangle');assert.equal(selectedStyle.outline,'none');assert.equal(selectedStyle.shadow,'none');
+ await page.waitForFunction(()=>Number(getComputedStyle(document.querySelector('.paper-group-row.is-selected'),'::before').opacity)===1);
+ const nightGlass=await page.locator('.paper-group-row.is-selected').evaluate(e=>({background:getComputedStyle(e,'::before').backgroundColor,opacity:Number(getComputedStyle(e,'::before').opacity),image:getComputedStyle(e,'::before').backgroundImage}));
+ const nightGlassColor=rgb(nightGlass.background);assert.ok(nightGlassColor[0]>nightGlassColor[1]&&nightGlassColor[1]>nightGlassColor[2],'night suite selection uses an orange tinted glass layer');assert.match(nightGlass.image,/gradient/,'selected suite retains the material highlight');
  const selectedTitle=page.locator('.paper-group-row.is-selected .paper-group-copy h3');
  const nightSelection=rgb(await selectedTitle.evaluate(e=>getComputedStyle(e).color));assert.ok(nightSelection[0]>nightSelection[1]&&nightSelection[1]>nightSelection[2],'night mode identifies the selected suite with orange');
- await click('[data-action="theme"][data-theme="light"]');
- await page.waitForFunction(()=>{const values=getComputedStyle(document.querySelector('.paper-group-row.is-selected')).backgroundColor.match(/[\d.]+/g).slice(0,3).map(Number);return Math.max(...values)-Math.min(...values)<=1&&values[0]<245});
- const daySelection=rgb(await page.locator('.paper-group-row.is-selected').evaluate(e=>getComputedStyle(e).backgroundColor));assert.ok(Math.max(...daySelection)-Math.min(...daySelection)<=1&&daySelection[0]<245,'day mode shades the selected suite gray');
+ await setTheme('light','library');
+ await page.waitForFunction(()=>{const row=document.querySelector('.paper-group-row.is-selected'),css=getComputedStyle(row,'::before'),values=css.backgroundColor.match(/[\d.]+/g).slice(0,3).map(Number);return Number(css.opacity)===1&&Math.max(...values)-Math.min(...values)<=1&&values[0]<245});
+ const daySelection=rgb(await page.locator('.paper-group-row.is-selected').evaluate(e=>getComputedStyle(e,'::before').backgroundColor));assert.ok(Math.max(...daySelection)-Math.min(...daySelection)<=1&&daySelection[0]<245,'day mode shades the selected suite with a neutral gray glass layer');
  await page.screenshot({path:path.join(output,'library-papers-light.png'),fullPage:true});
- await click('[data-action="theme"][data-theme="dark"]');
+ await setTheme('dark','library');
  await page.waitForTimeout(180);await page.screenshot({path:path.join(output,'library-papers-dark.png'),fullPage:true});
  await filter.click();await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value=""]');
  assert.equal(await page.locator('.paper-group-row.is-selected').count(),1,'one suite is selected at a time');
@@ -333,9 +361,52 @@ try{
  pass('paper selection, custom filters, clean titles and full-play listening credit follow completed user actions',{selectedStyle,creditedListeningSeconds:fullListening.completedListeningDays[dateKeys.today]});
  await click('[data-action="nav"][data-route="library"]');
  await click('[data-action="filter-menu"][data-filter="year"]');await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value=""]');
- await enterLibraryPaper(page,'listenly-original');await click('[data-action="nav"][data-route="home"]');
- assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),'listenly-original','opening a paper directory also selects that paper for the home collection');
- pass('opening a paper directory selects its articles for home');
+ const beforePreview=await saved();
+ const homeBeforePreview={paper:await page.locator('[data-action="select-paper"][aria-pressed="true"]').getAttribute('data-paper'),focus:beforePreview.homeFocus};
+ await enterLibraryPaper(page,'listenly-original');
+ assert.equal((await saved()).selectedPaper,homeBeforePreview.paper,'opening an unselected paper only previews its articles');
+ assert.equal(await page.locator('[data-action="theme"],[data-action="import"]').count(),0,'paper detail has no appearance or import controls');
+ await click('[data-action="open"][data-paper="listenly-original"][data-article="morning"]');
+ assert.equal((await saved()).selectedPaper,homeBeforePreview.paper,'opening an unplayed article does not select its paper');
+ assert.deepEqual((await saved()).homeFocus,homeBeforePreview.focus,'previewing an article preserves the last actually played home focus');
+ await click('[data-action="nav"][data-route="home"]');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),homeBeforePreview.paper,'home keeps the selected paper after another paper preview');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'second','home keeps the last played article after another paper preview');
+ await page.reload();await page.locator('.focus-card').waitFor();
+ assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),homeBeforePreview.paper,'paper preview cannot change the persisted home collection');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'second','article preview cannot replace the persisted played focus');
+ await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'experience-selection');await click('[data-action="open"][data-paper="experience-selection"][data-article="first"]');await click('[data-action="nav"][data-route="home"]');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'second','previewing another article inside the chosen paper also keeps the last played focus');
+ await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'listenly-original');
+ const libraryPlay=page.locator('[data-action="material-play"][data-paper="listenly-original"][data-article="morning"]');
+ assert.equal(await libraryPlay.count(),1,'each library article has an independent playback control');
+ await libraryPlay.click();await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&!a.error&&a.currentSrc.endsWith('/morning.wav')&&a.currentTime>.15});
+ assert.equal(await page.locator('.practice-header').count(),0,'library playback stays in the paper preview');
+ assert.equal((await saved()).selectedPaper,'listenly-original','actual playback selects the library article paper');
+ assert.deepEqual((await saved()).homeFocus,{paper:'listenly-original',article:'morning'},'actual playback records the article for the home focus');
+ await libraryPlay.click();await page.waitForFunction(()=>document.querySelector('#audio').paused);
+ await click('[data-action="nav"][data-route="home"]');assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),'listenly-original');assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'morning');
+ await click('[data-action="nav"][data-route="library"]');await click('[data-action="select-paper"][data-paper="experience-selection"]');await click('[data-action="nav"][data-route="home"]');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),'experience-selection','the explicit right-hand paper selector changes the home collection without playback');
+ assert.equal((await audioState()).paused,true,'explicit paper selection does not start audio');
+ const selectionBeforeFailure=await saved();
+ await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'listenly-original');
+ const failedMedia=`${url}/media/library.wav`;let rejectedMediaReads=0;
+ await page.route(failedMedia,async route=>{rejectedMediaReads++;await route.fulfill({status:503,contentType:'text/plain',body:'Deliberate unavailable original recording'})});
+ await click('[data-action="material-play"][data-paper="listenly-original"][data-article="library"]');await page.waitForFunction(()=>Boolean(document.querySelector('#audio').error));
+ assert.ok(rejectedMediaReads>0,'the failure regression rejects a genuine original media request');
+ assert.equal((await saved()).selectedPaper,selectionBeforeFailure.selectedPaper,'a playback request that fails before playing cannot replace the selected home paper');
+ assert.deepEqual((await saved()).homeFocus,selectionBeforeFailure.homeFocus,'a failed recording cannot replace the last played home focus');
+ await page.unroute(failedMedia);
+ await click('[data-action="nav"][data-route="home"]');assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),'experience-selection','home still displays its chosen collection after failed playback');
+ await click('[data-action="nav"][data-route="library"]');await openLibraryArticle(page,'listenly-original','library');
+ assert.equal((await saved()).selectedPaper,'experience-selection','reader preview still preserves the chosen collection');
+ await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&!a.error&&a.currentSrc.endsWith('/library.wav')&&a.currentTime>.15});
+ assert.equal((await saved()).selectedPaper,'listenly-original','actual reader playback selects its article paper');
+ assert.deepEqual((await saved()).homeFocus,{paper:'listenly-original',article:'library'},'reader playback records the played article as home focus');
+ await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').paused);await click('[data-action="nav"][data-route="home"]');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'library','home promotes an article genuinely played in the reader');
+ pass('paper and article previews and failed playback preserve home across reload; actual library/reader playback or the right-hand selector changes the home collection',{rejectedMediaReads});
  assert.deepEqual(result.pageErrors,[]);result.passed=true;
  console.log(JSON.stringify({passed:true,checks:result.checks.length,entrySha256:result.entrySha256,output}));
 }catch(error){result.failure={message:error.message,stack:error.stack};await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}

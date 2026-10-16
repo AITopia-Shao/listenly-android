@@ -1,4 +1,5 @@
-// Library navigation follows the same paper -> article hierarchy as the user.
+// Entering a paper/article previews it. Selection remains a separate right-hand
+// circle action, while playback has its own material-play control.
 export async function enterLibraryPaper(page,paper){
  const group=page.locator(`[data-action="open-paper"][data-paper="${paper}"]`);
  if(await group.count()){await group.first().click();return}

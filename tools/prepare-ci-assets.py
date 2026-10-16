@@ -14,6 +14,7 @@ import wave
 ROOT = Path(__file__).resolve().parents[1]
 WEB_MODULES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js")
 COMPAT_MODULES = ("app.compat.js", "compat-polyfills.js")
+FONT_FILES = ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md")
 
 
 def prepare(output: Path) -> None:
@@ -32,6 +33,9 @@ def prepare(output: Path) -> None:
     web.mkdir(parents=True)
     for filename in WEB_MODULES:
         shutil.copyfile(source / "assets" / "web" / filename, web / filename)
+    (web / 'fonts').mkdir()
+    for filename in FONT_FILES:
+        shutil.copyfile(source / 'assets' / 'web' / 'fonts' / filename, web / 'fonts' / filename)
     index = (web / "index.html").read_text(encoding="utf-8")
     referenced_scripts = set(re.findall(r'<script\b[^>]*\bsrc=[\"\']([^\"\']+)', index))
     for filename in COMPAT_MODULES:

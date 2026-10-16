@@ -83,20 +83,38 @@ try{
  };
  result.home=await poll('document.querySelector(".focus-card") && document.body.innerText');
  assert.ok(await evaluate('!!document.querySelector(".focus-card [data-action=open],.focus-card [data-action=import]")'),'Homepage has an actionable listening material entry');
+ result.fontState=await evaluate('(async()=>{await document.fonts.ready;return {body:getComputedStyle(document.body).fontFamily,control:getComputedStyle(document.querySelector(".focus-play")).fontFamily,loaded:[...document.fonts].filter(face=>face.status==="loaded").map(face=>({family:face.family,weight:face.weight,status:face.status}))}})()');
+ assert.match(result.fontState.body,/Inter/,'Native interface typography uses the bundled Inter family');
+ assert.match(result.fontState.control,/Inter/,'Native playback controls inherit the same type family');
+ assert.ok(result.fontState.loaded.some(face=>/Inter/.test(face.family)&&face.status==='loaded'),'At least one offline Inter face genuinely decodes on the native WebView');
  result.webview=await evaluate('navigator.userAgent');
  result.viewport=await evaluate('({width:innerWidth,height:innerHeight,contentWidth:document.documentElement.scrollWidth})');
  assert.ok(result.viewport.contentWidth<=result.viewport.width+1,'Mobile page fits the viewport');
  assert.equal(await evaluate('document.querySelectorAll("[data-action=mode]").length'),0,'Home has no training mode controls');
- assert.equal(await evaluate('document.querySelectorAll(".theme-control button").length'),2,'Home has a day/night control');
+ assert.equal(await evaluate('document.querySelectorAll(".theme-control button,[data-action=import]").length'),0,'Home reserves appearance and folder import controls for profile');
  assert.equal(await evaluate('document.querySelectorAll(".section-header button").length'),0,'Home has no redundant All entrance');
  await tapControl('.focus-card [data-action=home-play]');
  result.homePlayback=await poll('(()=>{var a=document.querySelector("#audio");return !a.paused&&a.currentTime>0&&!a.error?{time:a.currentTime,paused:a.paused}:null})()');
  assert.ok(!await evaluate('!!document.querySelector(".practice-header")'),'Home audio does not open the reader');
+ await tapControl('[data-action=nav][data-route=profile]');
+ await poll('document.querySelector(".statistics")&&document.querySelector("#audio").paused');
+ assert.equal(await evaluate('document.querySelectorAll(".topbar .theme-control button").length'),2,'Only profile exposes day and night appearance controls');
+ assert.equal(await evaluate('document.querySelectorAll(".topbar [data-action=import]").length'),1,'Only profile exposes the folder import plus');
  await tapControl('[data-action=theme][data-theme=dark]');
  await poll('document.documentElement.dataset.theme==="dark"');
  await wait(900);
+ result.profileAppearance=await evaluate('({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color,paused:document.querySelector("#audio").paused,error:document.querySelector("#audio").error})');
+ assert.equal(result.profileAppearance.background,'rgb(0, 0, 0)','Night mode uses the requested pure-black background on profile');
+ assert.ok(result.profileAppearance.paused&&!result.profileAppearance.error,'Changing profile appearance keeps the naturally paused audio error-free');
+ await evaluate('window.__appearanceReloadProbe=true');await rpc('Page.reload');
+ await poll('!window.__appearanceReloadProbe&&document.querySelector(".focus-card")');
+ assert.equal(await evaluate('document.documentElement.dataset.theme'),'dark','Night mode survives a page reload');
+ assert.equal(await evaluate('document.querySelectorAll(".theme-control button,[data-action=import]").length'),0,'Reloaded home keeps appearance and import controls in profile');
+ await tapControl('.focus-card [data-action=home-play]');
+ await poll('!document.querySelector("#audio").paused&&document.querySelector("#audio").currentTime>0&&!document.querySelector("#audio").error');
+ await wait(900);
  result.darkHome=await evaluate('({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color,playing:!document.querySelector("#audio").paused,time:document.querySelector("#audio").currentTime})');
- assert.ok(result.darkHome.playing&&result.darkHome.time>result.homePlayback.time+.2,'Changing appearance preserves actual home playback');
+ assert.ok(result.darkHome.playing&&result.darkHome.time>0,'Home playback works after changing appearance from profile and reloading');
  assert.equal(result.darkHome.background,'rgb(0, 0, 0)','Night mode uses the requested pure-black background');
  await writeFile(path.join(root,'home-dark.png'),run(['exec-out','screencap','-p'],true));
  await tapControl('.focus-card [data-action=home-play]');await poll('document.querySelector("#audio").paused');
@@ -108,10 +126,10 @@ try{
   assert.ok(!await evaluate('!!document.querySelector(".practice-header")'),'The native focus promotion stays on home');
   await tapControl('.focus-play');await poll('document.querySelector("#audio").paused');
  }
- await evaluate('window.__appearanceReloadProbe=true');await rpc('Page.reload');
- await poll('!window.__appearanceReloadProbe&&document.querySelector(".focus-card")');
- assert.equal(await evaluate('document.documentElement.dataset.theme'),'dark','Night mode survives a page reload');
+ await tapControl('[data-action=nav][data-route=profile]');
+ await poll('document.querySelector(".statistics")');
  await tapControl('[data-action=theme][data-theme=light]');await poll('document.documentElement.dataset.theme==="light"');
+ await tapControl('[data-action=nav][data-route=home]');await poll('document.querySelector(".focus-card")');
  await writeFile(path.join(root,'home-light.png'),run(['exec-out','screencap','-p'],true));
  let realSelection;
  if(localReal){
@@ -217,13 +235,27 @@ try{
  assert.equal(await evaluate('document.querySelectorAll(".quiz-question[data-question-index]").length'),qs.length,'Every question in the article is present on the same page');
  assert.equal(await evaluate('document.querySelectorAll(".question-dot,[data-action=next-question],[data-action=submit-answer],.quiz-card h3").length'),0,'The article has no question pager, individual submit action or written question heading');
  for(const q of qs)if(q.prompt)assert.ok(!await evaluate(`document.querySelector('.quiz-card').textContent.includes(${JSON.stringify(q.prompt)})`),'Written listening questions are absent from the exam DOM');
- assert.ok(await evaluate('document.querySelectorAll(".quiz-question.is-open").length<=1'),'Only one question dropdown is expanded at a time');
- const expandedIndex=await evaluate('(()=>{var row=document.querySelector(".quiz-question.is-open");return row?row.dataset.questionIndex:null})()');
- if(expandedIndex!==null){
+ const expandedIndices=await evaluate('[...document.querySelectorAll(".quiz-question.is-open")].map(row=>row.dataset.questionIndex)');
+ for(const expandedIndex of expandedIndices){
   const selector=`[data-action=toggle-question][data-index="${expandedIndex}"]`;
   await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
-  await tapControl(selector);await poll('document.querySelectorAll(".quiz-question.is-open").length===0');await wait(220);
+  await tapControl(selector);await poll(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='false'`);await wait(220);
  }
+ if(qs.length>1){
+  for(const index of [0,1]){
+   const selector=`[data-action=toggle-question][data-index="${index}"]`;
+   await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await tapControl(selector);
+   await poll(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='true'`);await wait(220);
+  }
+  result.independentDropdowns=await evaluate('[...document.querySelectorAll(".quiz-question.is-open")].map(row=>Number(row.dataset.questionIndex))');
+  assert.deepEqual(result.independentDropdowns,[0,1],'Native taps can leave two option dropdowns expanded together');
+  for(const index of [0,1]){
+   const selector=`[data-action=toggle-question][data-index="${index}"]`;
+   await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await tapControl(selector);
+   await poll(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='false'`);await wait(220);
+   if(index===0)assert.equal(await evaluate('document.querySelector(\'[data-action=toggle-question][data-index="1"]\').getAttribute("aria-expanded")'),'true','Collapsing one question leaves the other expanded');
+  }
+ }else result.independentDropdowns={status:'not-applicable',reason:'This fixture has only one question'};
  result.quizGeometry=await evaluate('(()=>{var panel=document.querySelector(".main-panel"),p=panel.getBoundingClientRect(),rows=[...document.querySelectorAll(".quiz-question")],submit=document.querySelector("[data-action=submit-article]"),s=submit.getBoundingClientRect();return {width:innerWidth,height:innerHeight,panel:{left:p.left,right:p.right,top:p.top,bottom:p.bottom},scrollHeight:panel.scrollHeight,clientHeight:panel.clientHeight,rows:rows.map(row=>{var r=row.getBoundingClientRect();return {index:row.dataset.questionIndex,left:r.left,right:r.right,top:r.top,bottom:r.bottom}}),submit:{top:s.top,bottom:s.bottom}}})()');
  for(const row of result.quizGeometry.rows)assert.ok(row.left>=result.quizGeometry.panel.left-1&&row.right<=result.quizGeometry.panel.right+1&&row.top>=result.quizGeometry.panel.top-1&&row.bottom<=result.quizGeometry.panel.bottom+1,'Every collapsed question row fits above the audio dock');
  assert.ok(result.quizGeometry.submit.bottom<=result.quizGeometry.panel.bottom+1,'The whole-article submit control fits on the same compact page');
@@ -232,11 +264,23 @@ try{
   const toggle=`[data-action=toggle-question][data-index="${index}"]`,optionId=publicDemo?q.answer:q.options[0].id;
   await evaluate(`document.querySelector(${JSON.stringify(toggle)}).scrollIntoView({block:'center'})`);
   const opened=await tapControl(toggle);
-  await poll(`document.querySelector(${JSON.stringify(toggle)}).getAttribute('aria-expanded')==='true'&&document.querySelectorAll('.quiz-question.is-open').length===1`);await wait(220);
+  await poll(`document.querySelector(${JSON.stringify(toggle)}).getAttribute('aria-expanded')==='true'`);await wait(220);
+  let otherToggle;
+  if(!result.articleChoices.length&&qs.length>1){
+   const otherIndex=index===0?1:0;otherToggle=`[data-action=toggle-question][data-index="${otherIndex}"]`;
+   await evaluate(`document.querySelector(${JSON.stringify(otherToggle)}).scrollIntoView({block:'center'})`);await tapControl(otherToggle);
+   await poll(`document.querySelector(${JSON.stringify(otherToggle)}).getAttribute('aria-expanded')==='true'&&document.querySelector(${JSON.stringify(toggle)}).getAttribute('aria-expanded')==='true'`);await wait(220);
+  }
   const option=`[data-action=answer][data-index="${index}"][data-option="${optionId}"]`;
   await evaluate(`document.querySelector(${JSON.stringify(option)}).scrollIntoView({block:'center'})`);
   const choice=await tapControl(option);
   await poll(`document.querySelector(${JSON.stringify(toggle)}).getAttribute('aria-expanded')==='false'`);await wait(220);
+  if(otherToggle){
+   assert.equal(await evaluate(`document.querySelector(${JSON.stringify(otherToggle)}).getAttribute('aria-expanded')`),'true','Choosing an option collapses only that question');
+   result.choiceLeavesOtherExpanded=true;
+   await evaluate(`document.querySelector(${JSON.stringify(otherToggle)}).scrollIntoView({block:'center'})`);await tapControl(otherToggle);
+   await poll(`document.querySelector(${JSON.stringify(otherToggle)}).getAttribute('aria-expanded')==='false'`);await wait(220);
+  }
   assert.ok(await evaluate(`document.querySelector(${JSON.stringify(toggle)}).innerText.includes(${JSON.stringify(q.options.find(o=>o.id===optionId).text)})`),'The collapsed row shows the complete chosen option');
   assert.equal(await evaluate(`JSON.parse(localStorage.getItem('listenly.state.v1')).answers[${JSON.stringify(key)}].submitted`),false,'Choosing an option saves a draft without grading or advancing');
   const remainingUnchosen=pendingQuestions.some(item=>item.key!==key&&!changedKeys.has(item.key)&&!item.q.options.some(o=>o.id===result.answersBeforeInteraction[item.key]?.choice));
@@ -270,31 +314,66 @@ try{
  await poll('!window.__listenlyReloadProbe && document.querySelector(".focus-card")');
  result.restoredAnswers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
  assert.deepEqual(result.restoredAnswers,result.answer,'Answers survive WebView page reload');
+ const savedHomeExpression='(()=>{var s=JSON.parse(localStorage.getItem("listenly.state.v1"));return {selectedPaper:s.selectedPaper,homeFocus:s.homeFocus||null}})()';
+ const homeSnapshotExpression='(()=>{var s=JSON.parse(localStorage.getItem("listenly.state.v1")),b=document.querySelector(".focus-play");return {selectedPaper:s.selectedPaper,homeFocus:s.homeFocus||null,hero:{paper:b.dataset.paper,article:b.dataset.article}}})()';
+ const homeBeforePreview=await evaluate(homeSnapshotExpression);
  await tapControl('[data-action=nav][data-route=library]');
  await poll('document.querySelector(".paper-group-row")');
+ assert.equal(await evaluate('document.querySelectorAll(".theme-control button,[data-action=import]").length'),0,'The library paper directory has no appearance or import controls');
  assert.equal(await evaluate('document.querySelectorAll("#library-list [data-action=open]").length'),0,'Library first level lists papers instead of individual articles');
  result.filterTap=await tapControl('[data-action=filter-menu][data-filter=year]');
  await poll('document.querySelector(".filter-popover")');
  assert.ok(await evaluate('document.querySelectorAll(".filter-popover [data-action=set-filter]").length>0'),'Year filter provides explicit choices');
  run(['shell','input','keyevent','4']);
  await poll('!document.querySelector(".filter-popover")&&document.querySelector(".paper-group-row")');
- const paperProbe=await evaluate('document.querySelector("[data-action=open-paper]").dataset.paper');
- await evaluate(`document.querySelector('[data-action=open-paper][data-paper="${paperProbe}"]').click()`);
+ const paperProbe=await evaluate(`(()=>{var rows=[...document.querySelectorAll('[data-action=open-paper]')],other=rows.find(b=>b.dataset.paper!==${JSON.stringify(homeBeforePreview.selectedPaper)});return (other||rows[0]).dataset.paper})()`);
+ const paperOpenSelector=`[data-action=open-paper][data-paper="${paperProbe}"]`;
+ await evaluate(`document.querySelector(${JSON.stringify(paperOpenSelector)}).scrollIntoView({block:'center'})`);await tapControl(paperOpenSelector);
  await poll('document.querySelector("[data-action=library-back]")&&document.querySelector("#library-list [data-action=open]")');
+ assert.equal(await evaluate('document.querySelectorAll(".theme-control button,[data-action=import]").length'),0,'The library article directory has no appearance or import controls');
+ const selectionAfterPaperPreview=await evaluate(savedHomeExpression);
+ assert.deepEqual(selectionAfterPaperPreview,{selectedPaper:homeBeforePreview.selectedPaper,homeFocus:homeBeforePreview.homeFocus},'Previewing a paper does not choose it or change the home focus');
+ const previewArticle=await evaluate(`(()=>{var rows=[...document.querySelectorAll('#library-list [data-action=open]')],other=rows.find(b=>b.dataset.paper!==${JSON.stringify(homeBeforePreview.hero.paper)}||b.dataset.article!==${JSON.stringify(homeBeforePreview.hero.article)}),b=other||rows[0];return {paper:b.dataset.paper,article:b.dataset.article}})()`);
+ const previewArticleSelector=`#library-list [data-action=open][data-paper="${previewArticle.paper}"][data-article="${previewArticle.article}"]`;
+ await evaluate(`document.querySelector(${JSON.stringify(previewArticleSelector)}).scrollIntoView({block:'center'})`);await tapControl(previewArticleSelector);
+ await poll('document.querySelector(".practice-header")&&document.querySelector("#audio").readyState>=1');
+ const selectionAfterArticlePreview=await evaluate(savedHomeExpression);
+ assert.deepEqual(selectionAfterArticlePreview,selectionAfterPaperPreview,'Previewing article text does not select its paper or replace the pinned article');
+ run(['shell','input','keyevent','4']);await poll('document.querySelector(".focus-card")');
+ const homeAfterPreview=await evaluate(homeSnapshotExpression);
+ assert.deepEqual(homeAfterPreview,homeBeforePreview,'Returning home after a paper and article preview preserves the chosen suite and pinned article');
+ result.libraryPreview={paper:paperProbe,article:previewArticle.article,alternatePaper:paperProbe!==homeBeforePreview.selectedPaper,before:homeBeforePreview,afterPaper:selectionAfterPaperPreview,afterArticle:selectionAfterArticlePreview,homeAfter:homeAfterPreview};
+ await tapControl('[data-action=nav][data-route=library]');await poll('document.querySelector(".paper-group-row")');
+ await evaluate(`document.querySelector(${JSON.stringify(paperOpenSelector)}).scrollIntoView({block:'center'})`);await tapControl(paperOpenSelector);
+ await poll('document.querySelector(".library-paper-row .row-play[data-action=material-play]")');
+ const materialPlaySelector=`.library-paper-row .row-play[data-action=material-play][data-paper="${previewArticle.paper}"][data-article="${previewArticle.article}"]`;
+ await evaluate(`document.querySelector(${JSON.stringify(materialPlaySelector)}).scrollIntoView({block:'center'})`);
+ result.libraryMaterialPlayTap=await tapControl(materialPlaySelector);
+ result.libraryMaterialPlayback=await poll(`(()=>{var a=document.querySelector('#audio'),s=JSON.parse(localStorage.getItem('listenly.state.v1'));return !a.paused&&a.currentTime>0&&!a.error&&s.selectedPaper===${JSON.stringify(previewArticle.paper)}?{time:a.currentTime,playing:!a.paused,selectedPaper:s.selectedPaper,homeFocus:s.homeFocus||null}:null})()`);
+ assert.ok(await evaluate('!!document.querySelector("[data-action=library-back]")'),'The library play button starts audio without opening article text');
+ await tapControl('[data-action=nav][data-route=home]');await poll('document.querySelector(".focus-card")');
+ result.libraryPlayHome=await evaluate(homeSnapshotExpression);
+ assert.deepEqual(result.libraryPlayHome.hero,previewArticle,'Actually playing a library article selects its paper and pins that article on home');
+ assert.equal(result.libraryPlayHome.selectedPaper,previewArticle.paper,'Library playback persists the chosen suite');
+ await tapControl('[data-action=nav][data-route=library]');await poll('document.querySelector(".paper-group-row")');
+ await evaluate(`document.querySelector(${JSON.stringify(paperOpenSelector)}).scrollIntoView({block:'center'})`);await tapControl(paperOpenSelector);
+ await poll('document.querySelector("[data-action=library-back]")');
  run(['shell','input','keyevent','4']);
  await poll('document.querySelector(".paper-group-row")&&!document.querySelector("[data-action=library-back]")');
- await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${paperProbe}"]').scrollIntoView({block:'center'})`);
- result.paperSelectionTap=await tapControl(`[data-action=select-paper][data-paper="${paperProbe}"]`);
- assert.equal(await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${paperProbe}"]').getAttribute('aria-pressed')`),'true','Selecting a paper updates its visible selection state');
+ const circlePaper=await evaluate(`(()=>{var rows=[...document.querySelectorAll('[data-action=select-paper]')],other=rows.find(b=>b.dataset.paper!==${JSON.stringify(previewArticle.paper)});return (other||rows[0]).dataset.paper})()`);
+ await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').scrollIntoView({block:'center'})`);
+ result.paperSelectionTap=await tapControl(`[data-action=select-paper][data-paper="${circlePaper}"]`);
+ assert.equal(await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').getAttribute('aria-pressed')`),'true','The right circular selection button updates the chosen paper');
  await tapControl('[data-action=nav][data-route=home]');
  result.selectedPaperHome=await evaluate('({paper:document.querySelector(".focus-play").dataset.paper,listed:[...document.querySelectorAll(".home-paper-row [data-action=home-play]")].map(b=>b.dataset.paper),saved:JSON.parse(localStorage.getItem("listenly.state.v1")).selectedPaper})');
- assert.equal(result.selectedPaperHome.paper,paperProbe,'The selected paper supplies the home focus');
- assert.ok(result.selectedPaperHome.listed.every(paper=>paper===paperProbe),'Home lists only articles in the chosen paper');
- assert.equal(result.selectedPaperHome.saved,paperProbe,'Paper choice is persisted');
+ assert.equal(result.selectedPaperHome.paper,circlePaper,'The explicitly selected paper supplies the home focus');
+ assert.ok(result.selectedPaperHome.listed.every(paper=>paper===circlePaper),'Home lists only articles in the chosen paper');
+ assert.equal(result.selectedPaperHome.saved,circlePaper,'Paper choice is persisted');
  await tapControl('[data-action=nav][data-route=profile]');
  await poll('document.querySelector(".activity-calendar")');
  assert.equal(await evaluate('document.querySelectorAll(".settings-card [data-action=import]").length'),0,'Profile removes the duplicate folder-import entry');
  assert.equal(await evaluate('document.querySelectorAll(".topbar [data-action=import]").length'),1,'The top folder-import button remains available on profile');
+ assert.equal(await evaluate('document.querySelectorAll(".topbar .theme-control button").length'),2,'Profile retains the day/night control beside folder import');
  await tapControl('.topbar [data-action=import]');await poll('document.querySelectorAll(".dialog .import-choice").length===2');
  run(['shell','input','keyevent','4']);await poll('!document.querySelector(".dialog-shade")&&document.querySelector(".statistics")');
  assert.ok(await evaluate('document.querySelector(".statistics").innerText.includes("今日完成 · 篇")'),'Today completion is labeled in articles');

@@ -35,6 +35,12 @@ def build(args: argparse.Namespace) -> None:
     if library.get("papers") != []:
         raise ValueError("CI and public demo builds require an empty real-paper library")
     allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js", "demo.json", "bundled-library.json")}
+    for filename in ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md"):
+        packaged = staged / 'assets' / 'web' / 'fonts' / filename
+        source_font = ROOT / 'app' / 'src' / 'main' / 'assets' / 'web' / 'fonts' / filename
+        if hashlib.sha256(packaged.read_bytes()).digest() != hashlib.sha256(source_font.read_bytes()).digest():
+            raise ValueError(f"Packaged offline font or license differs: {filename}")
+        allowed.add(f"assets/web/fonts/{filename}")
     if args.demo:
         examples = ROOT / "examples" / "demo"
         original = json.loads((examples / "demo.json").read_text(encoding="utf-8-sig"))
