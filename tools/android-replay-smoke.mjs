@@ -20,6 +20,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const getJSON=url=>new Promise((resolve,reject)=>http.get(url,res=>{let body='';res.on('data',v=>body+=v);res.on('end',()=>{try{resolve(JSON.parse(body))}catch(error){reject(error)}})}).on('error',reject));
 const result={serial,apk:path.resolve(apk),label,checkedAt:new Date().toISOString(),scenarios:[],network:[],console:[]};
 result.apkSha256=createHash('sha256').update(await readFile(apk)).digest('hex');
+result.harnessSha256Normalized=createHash('sha256').update((await readFile(new URL(import.meta.url),'utf8')).replace(/\r\n/g,'\n')).digest('hex');
 let socket,forwarded=false,evaluate,rpc;
 const stateExpr=`(()=>{var a=document.querySelector('#audio'),error=document.querySelector('#audio-error'),toast=document.querySelector('#toast');return {src:a.currentSrc,attributeSrc:a.getAttribute('src'),duration:Number.isFinite(a.duration)?a.duration:null,currentTime:a.currentTime,paused:a.paused,ended:a.ended,seeking:a.seeking,networkState:a.networkState,readyState:a.readyState,error:a.error?{code:a.error.code,message:a.error.message}:null,buffered:[...Array(a.buffered.length)].map((_,i)=>[a.buffered.start(i),a.buffered.end(i)]),seekable:[...Array(a.seekable.length)].map((_,i)=>[a.seekable.start(i),a.seekable.end(i)]),panelError:error&&!error.hidden?error.textContent:null,toast:toast&&toast.classList.contains('visible')?toast.textContent:null}})()`;
 const snapshot=()=>evaluate(stateExpr);
@@ -125,18 +126,22 @@ try{
   assert.equal(after.error,null,'Dropdown interaction leaves native media error-free');
   await pause();
   const expanded=await evaluate('[...document.querySelectorAll(".quiz-question.is-open")].map(row=>Number(row.dataset.questionIndex))');
+  const remainingOpen=new Set(expanded),collapseStates=[];
   for(const index of expanded){
    const selector=`[data-action=toggle-question][data-index="${index}"]`;
    await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await tap(selector);
    await poll(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-expanded')==='false'`);await wait(220);
-   if(index!==nextIndex&&expanded.includes(nextIndex))assert.equal(await evaluate(`document.querySelector('[data-action=toggle-question][data-index="${nextIndex}"]').getAttribute('aria-expanded')`),'true','Collapsing one question preserves the other open question');
+   remainingOpen.delete(index);
+   const actualOpen=await evaluate('[...document.querySelectorAll(".quiz-question.is-open")].map(row=>Number(row.dataset.questionIndex))');
+   assert.deepEqual(actualOpen,[...remainingOpen],'Collapsing one question preserves every remaining open question');
+   collapseStates.push({closed:index,remaining:actualOpen});
   }
   await poll('document.querySelectorAll(".quiz-question.is-open").length===0');await wait(220);
   const geometry=await evaluate('(()=>{var p=document.querySelector(".main-panel").getBoundingClientRect(),rows=[...document.querySelectorAll(".quiz-question")].map(b=>{var r=b.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}});return {panel:{left:p.left,right:p.right,top:p.top,bottom:p.bottom},rows:rows}})()');
   for(const row of geometry.rows)assert.ok(row.left>=geometry.panel.left-1&&row.right<=geometry.panel.right+1&&row.top>=geometry.panel.top-1&&row.bottom<=geometry.panel.bottom+1,'The collapsed whole-article question list fits above the audio dock');
   await tap('[data-action=mode][data-mode=intensive]');await poll('document.querySelector(".transcript-card")&&document.querySelector("#audio").readyState>=1');
   const returned=await snapshot();assert.equal(returned.error,null,'Returning from the complete question list retains playable article audio');
-  return {questionCount:article.questions.length,nextIndex,independentDropdowns:independentDropdowns||{status:'not-applicable',reason:'This fixture has only one question'},first,before,selected,after,clipPlayback,geometry,returned};
+  return {questionCount:article.questions.length,nextIndex,independentDropdowns:independentDropdowns||{status:'not-applicable',reason:'This fixture has only one question'},expandedBeforeCollapse:expanded,collapseStates,first,before,selected,after,clipPlayback,geometry,returned};
  });
  // The original demo has timestamps, unlike the real untimed CET article used above.
  if(!fixture)await scenario('timed-sentence-loop',async()=>{await evaluate('window.listenlyBack();document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original]").click();document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click()');await poll('document.querySelector("#audio").readyState>=1');await tap('[data-action=display][data-display=bilingual]');await pause();await evaluate('document.querySelector("#audio").currentTime=0');await tap('[data-action=sentence][data-index="0"]');await poll('!document.querySelector("#audio").paused');await tap('[data-action=loop]');const next=await evaluate('Number(document.querySelector(\'.sentence[data-index="1"] .timestamp\').textContent.split(":").reduce((v,n)=>v*60+Number(n),0))');await evaluate(`document.querySelector('#audio').currentTime=${next-.3}`);await poll(`document.querySelector('#audio').currentTime<${next-1}`);const looped=await snapshot();assert.equal(looped.error,null);assert.equal(looped.paused,false);await tap('[data-action=loop]');await pause();return {boundary:next,looped}});
