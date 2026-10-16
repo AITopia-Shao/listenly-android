@@ -1,5 +1,6 @@
 """Public packaging contracts: complete original playback assets and no exam corpus."""
 import importlib.util
+import copy
 import json
 from pathlib import Path
 import tempfile
@@ -10,6 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("prepare_demo_assets", ROOT / "tools" / "prepare-demo-assets.py")
 assets = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(assets)
+ci_spec = importlib.util.spec_from_file_location("prepare_ci_assets", ROOT / "tools" / "prepare-ci-assets.py")
+ci_assets = importlib.util.module_from_spec(ci_spec)
+ci_spec.loader.exec_module(ci_assets)
+builder_spec = importlib.util.spec_from_file_location("build_apk_ci", ROOT / "tools" / "build-apk-ci.py")
+ci_builder = importlib.util.module_from_spec(builder_spec)
+builder_spec.loader.exec_module(ci_builder)
 
 
 class PublicDemoAssetTests(unittest.TestCase):
@@ -55,6 +62,43 @@ class PublicDemoAssetTests(unittest.TestCase):
             assets.prepare(ROOT / "examples" / "demo")
         with self.assertRaises(ValueError):
             assets.prepare(ROOT / ".build" / "demo")
+
+
+class CiFixtureAssetTests(unittest.TestCase):
+    def test_two_distinct_original_suites_share_the_single_original_recording(self):
+        ci_root = ROOT / ".build" / "ci"
+        ci_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="suite-contract-", dir=ci_root) as temporary:
+            output = Path(temporary) / "main"
+            ci_assets.prepare(output)
+            web = output / "assets" / "web"
+            primary = json.loads((web / "demo.json").read_text(encoding="utf-8"))
+            library = json.loads((web / "bundled-library.json").read_text(encoding="utf-8"))
+            ci_builder.validate_ci_suites(primary, library)
+            papers = [primary, *library["papers"]]
+            self.assertEqual([paper["id"] for paper in papers], ["listenly-original-ci", "listenly-original-ci-selection"])
+            self.assertEqual([paper["articles"][0]["id"] for paper in papers], ["ci-playback", "ci-selection"])
+            self.assertEqual([paper["articles"][0]["questions"][0]["id"] for paper in papers], ["ci-q1", "ci-selection-q1"])
+            self.assertEqual(sum(len(paper["articles"]) for paper in papers), 2)
+            self.assertEqual(sum(len(article["questions"]) for paper in papers for article in paper["articles"]), 2)
+            for paper in papers:
+                self.assertTrue(paper["testFixture"] and paper["isDemo"])
+                self.assertEqual(paper["source"]["license"], "CC0-1.0")
+                self.assertEqual(paper["articles"][0]["audio"], {"intensive": "media/ci-playback.wav", "exam": "media/ci-playback.wav"})
+            self.assertEqual([path.name for path in (web / "media").iterdir()], ["ci-playback.wav"])
+            with wave.open(str(web / "media" / "ci-playback.wav"), "rb") as audio:
+                self.assertEqual((audio.getnchannels(), audio.getsampwidth(), audio.getframerate()), (1, 2, 16000))
+                self.assertEqual(audio.getnframes() / audio.getframerate(), 24)
+            self.assertEqual(library["summary"], {"papers": 1, "articles": 1, "questions": 1, "audioBytes": (web / "media" / "ci-playback.wav").stat().st_size})
+            for mutation in ("unknown-suite", "unlicensed", "unexpected-audio", "unlabelled", "third-suite"):
+                changed = copy.deepcopy(library)
+                if mutation == "unknown-suite": changed["papers"][0]["id"] = "unknown-source"
+                elif mutation == "unlicensed": changed["papers"][0]["source"]["license"] = "unknown"
+                elif mutation == "unexpected-audio": changed["papers"][0]["articles"][0]["audio"]["exam"] = "media/third-party.mp3"
+                elif mutation == "unlabelled": changed["testFixture"] = False
+                else: changed["papers"].append(copy.deepcopy(primary))
+                with self.subTest(rejected=mutation), self.assertRaises(ValueError):
+                    ci_builder.validate_ci_suites(primary, changed)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,19 @@ ANDROID = "http://schemas.android.com/apk/res/android"
 ET.register_namespace("android", ANDROID)
 
 
+def validate_ci_suites(fixture: dict, library: dict) -> None:
+    """Allow only the two declared original suites and their shared test tone."""
+    secondary = library.get("papers")
+    if not library.get("testFixture") or not isinstance(secondary, list) or len(secondary) != 1:
+        raise ValueError("CI builds require exactly one labelled secondary original suite")
+    for paper, expected_id, article_id in ((fixture, "listenly-original-ci", "ci-playback"), (secondary[0], "listenly-original-ci-selection", "ci-selection")):
+        articles = paper.get("articles", [])
+        if paper.get("id") != expected_id or not paper.get("testFixture") or not paper.get("isDemo") or paper.get("source", {}).get("license") != "CC0-1.0" or len(articles) != 1 or articles[0].get("id") != article_id:
+            raise ValueError("CI suite identity and original CC0 provenance must match the declared fixture")
+        if articles[0].get("audio") != {"intensive": "media/ci-playback.wav", "exam": "media/ci-playback.wav"}:
+            raise ValueError("CI suites must only reference the shared original synthetic WAV")
+
+
 def build(args: argparse.Namespace) -> None:
     sdk = args.sdk.resolve()
     java_home = args.java_home.resolve()
@@ -32,8 +45,13 @@ def build(args: argparse.Namespace) -> None:
         raise ValueError(f"Only source staged inside .build/{staging_type} may be packaged")
     fixture = json.loads((staged / "assets" / "web" / "demo.json").read_text(encoding="utf-8"))
     library = json.loads((staged / "assets" / "web" / "bundled-library.json").read_text(encoding="utf-8"))
-    if library.get("papers") != []:
-        raise ValueError("CI and public demo builds require an empty real-paper library")
+    if args.demo:
+        if library.get("papers") != []:
+            raise ValueError("Public demo builds require an empty real-paper library")
+    else:
+        # Only the explicitly labelled second original suite may be bundled in
+        # compatibility builds. Public release examples retain an empty library.
+        validate_ci_suites(fixture, library)
     allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js", "demo.json", "bundled-library.json")}
     for filename in ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md"):
         packaged = staged / 'assets' / 'web' / 'fonts' / filename

@@ -76,9 +76,14 @@ try{
  const evaluate=async expression=>{const response=await rpc('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(response.exceptionDetails)throw new Error(JSON.stringify(response.exceptionDetails));return response.result.value};
  const poll=async expression=>{for(let i=0;i<30;i++){const value=await evaluate(expression);if(value)return value;await wait(500)}throw new Error(`UI readiness failed: ${expression}`)};
  const tapControl=async selector=>{
-  const tap=await evaluate(`(()=>{var selector=${JSON.stringify(selector)},b=document.querySelector(selector),r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return {x:x,y:y,scale:devicePixelRatio,visible:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,hit:hit&&hit.closest(selector)===b}})()`);
+  // A DOM update can precede the WebView compositor's native hit-test frame.
+  // Measure two presented frames, then send exactly one real Android tap.
+  const tap=await poll(`(async()=>{var selector=${JSON.stringify(selector)},b=document.querySelector(selector);if(!b)return null;await new Promise(requestAnimationFrame);var before=b.getBoundingClientRect();await new Promise(requestAnimationFrame);if(!b.isConnected)return null;var r=b.getBoundingClientRect();if(Math.abs(before.left-r.left)>.5||Math.abs(before.top-r.top)>.5||Math.abs(before.width-r.width)>.5||Math.abs(before.height-r.height)>.5)return null;var x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);window.__listenlyNativeTap={selector:selector,events:[],click:null};var probe=window.__listenlyNativeTap;var listener=function(event){var record={type:event.type,trusted:event.isTrusted,x:event.clientX,y:event.clientY,matches:event.target.closest(selector)===b,time:performance.now()};probe.events.push(record);if(event.type==='click'){probe.click=record;['pointerdown','pointerup','pointercancel','click'].forEach(function(type){document.removeEventListener(type,listener,true)})}};['pointerdown','pointerup','pointercancel','click'].forEach(function(type){document.addEventListener(type,listener,true)});return {x:x,y:y,scale:devicePixelRatio,visible:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,hit:hit&&hit.closest(selector)===b,stableFrames:2}})()`);
   assert.ok(tap.visible&&tap.hit,`Visible native touch target: ${selector}`);
+  const delivery={selector,tap};(result.nativeTouches??=[]).push(delivery);
   run(['shell','input','tap',String(Math.round(tap.x*tap.scale)),String(Math.round(tap.y*tap.scale))]);
+  try{await poll('window.__listenlyNativeTap.click')}finally{delivery.events=await evaluate('window.__listenlyNativeTap.events')}
+  assert.ok(delivery.events.some(event=>event.type==='click'&&event.trusted&&event.matches),`One native tap delivers a trusted click to: ${selector}`);
   return tap;
  };
  result.home=await poll('document.querySelector(".focus-card") && document.body.innerText');
@@ -140,7 +145,7 @@ try{
   assert.ok(article,'The project emulator has an unanswered real question');
   realSelection={paper,article};
   await evaluate(`document.querySelector('[data-action=nav][data-route=library]').click();document.querySelector('[data-action=open-paper][data-paper="${paper.id}"]').click();document.querySelector('[data-action=open][data-paper="${paper.id}"][data-article="${article.id}"]').click()`);
- }else await evaluate(publicDemo?'document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original]").click();document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click();document.querySelector("[data-action=mode][data-mode=intensive]").click()':'document.querySelector(".focus-card [data-action=open]").click()');
+ }else await evaluate(publicDemo?'document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original]").click();document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click();document.querySelector("[data-action=mode][data-mode=intensive]").click()':'document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original-ci]").click();document.querySelector("[data-action=open][data-paper=listenly-original-ci][data-article=ci-playback]").click()');
  assert.ok(await evaluate('!!document.querySelector("[data-mode=intensive][aria-pressed=true]")&&!!document.querySelector("[data-display=hidden][aria-pressed=true]")'),'Opening the reader defaults to intensive and hidden');
  assert.ok(await evaluate('!/[0-9]+\\s*[-–—~～至]\\s*[0-9]+\\s*题/.test(document.querySelector(".practice-title").innerText)'),'Native article titles omit their question range');
  assert.deepEqual(await evaluate('[...document.querySelectorAll(".display-controls [data-action=display]")].map(b=>b.dataset.display)'),['hidden','original','bilingual'],'Native text choices are ordered hidden, original, bilingual');
@@ -327,6 +332,9 @@ try{
  run(['shell','input','keyevent','4']);
  await poll('!document.querySelector(".filter-popover")&&document.querySelector(".paper-group-row")');
  const paperProbe=await evaluate(`(()=>{var rows=[...document.querySelectorAll('[data-action=open-paper]')],other=rows.find(b=>b.dataset.paper!==${JSON.stringify(homeBeforePreview.selectedPaper)});return (other||rows[0]).dataset.paper})()`);
+ const paperDirectoryCount=await evaluate('document.querySelectorAll("[data-action=open-paper]").length');
+ if(!publicDemo)assert.ok(paperDirectoryCount>=2,'The compatibility and real-library checks require two distinct paper suites');
+ if(paperDirectoryCount>1)assert.notEqual(paperProbe,homeBeforePreview.selectedPaper,'The preview must open a different suite from the selected home collection');
  const paperOpenSelector=`[data-action=open-paper][data-paper="${paperProbe}"]`;
  await evaluate(`document.querySelector(${JSON.stringify(paperOpenSelector)}).scrollIntoView({block:'center'})`);await tapControl(paperOpenSelector);
  await poll('document.querySelector("[data-action=library-back]")&&document.querySelector("#library-list [data-action=open]")');
@@ -361,9 +369,14 @@ try{
  run(['shell','input','keyevent','4']);
  await poll('document.querySelector(".paper-group-row")&&!document.querySelector("[data-action=library-back]")');
  const circlePaper=await evaluate(`(()=>{var rows=[...document.querySelectorAll('[data-action=select-paper]')],other=rows.find(b=>b.dataset.paper!==${JSON.stringify(previewArticle.paper)});return (other||rows[0]).dataset.paper})()`);
+ const selectionBefore=await evaluate(`(()=>{var button=document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]');window.__paperSelectionButton=button;window.__paperSelectionRow=button.closest('.paper-group-row');return {paper:JSON.parse(localStorage.getItem('listenly.state.v1')).selectedPaper,pressed:button.getAttribute('aria-pressed')==='true'}})()`);
+ if(paperDirectoryCount>1){assert.notEqual(circlePaper,selectionBefore.paper,'The right-hand selection test must genuinely choose a different suite');assert.equal(selectionBefore.pressed,false,'The suite was not selected before the native touch')}
  await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').scrollIntoView({block:'center'})`);
  result.paperSelectionTap=await tapControl(`[data-action=select-paper][data-paper="${circlePaper}"]`);
  assert.equal(await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').getAttribute('aria-pressed')`),'true','The right circular selection button updates the chosen paper');
+ const selectionAfter=await evaluate(`(()=>{var button=document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]');return {paper:JSON.parse(localStorage.getItem('listenly.state.v1')).selectedPaper,pressed:button.getAttribute('aria-pressed')==='true',inPlace:button===window.__paperSelectionButton&&button.closest('.paper-group-row')===window.__paperSelectionRow}})()`);
+ assert.equal(selectionAfter.paper,circlePaper,'The native selection persists the newly chosen suite');assert.equal(selectionAfter.inPlace,true,'Selecting a different suite retains its row and indicator control for continuous animation');
+ result.paperSelectorChange={before:selectionBefore.paper,after:selectionAfter.paper,pressedBefore:selectionBefore.pressed,pressedAfter:selectionAfter.pressed,inPlace:selectionAfter.inPlace};
  await tapControl('[data-action=nav][data-route=home]');
  await poll('document.querySelector(".focus-card")');
  result.selectedPaperHome=await evaluate('({paper:document.querySelector(".focus-play").dataset.paper,listed:[...document.querySelectorAll(".home-paper-row [data-action=home-play]")].map(b=>b.dataset.paper),saved:JSON.parse(localStorage.getItem("listenly.state.v1")).selectedPaper})');

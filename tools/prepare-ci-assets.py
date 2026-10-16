@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 from pathlib import Path
@@ -83,12 +84,21 @@ def prepare(output: Path) -> None:
                 "answer": "A", "explanation": "原创测试音用于验证播放、进度和模式切换，不属于六级真题。"}]
         }]
     }
+    # A distinct suite is necessary to exercise actual cross-paper preview,
+    # playback promotion and selection transitions rather than reselecting the
+    # only, already selected paper. Both suites reuse the same original tone.
+    selection_fixture = copy.deepcopy(fixture)
+    selection_fixture["id"] = "listenly-original-ci-selection"
+    selection_fixture["title"] = "拾听原创 CI 套卷选择测试 · 非六级真题"
+    selection_fixture["articles"][0]["id"] = "ci-selection"
+    selection_fixture["articles"][0]["title"] = "Original suite selection test fixture"
+    selection_fixture["articles"][0]["questions"][0]["id"] = "ci-selection-q1"
     (web / "demo.json").write_text(json.dumps(fixture, ensure_ascii=False, indent=2), encoding="utf-8")
     (web / "bundled-library.json").write_text(json.dumps({
-        "papers": [], "testFixture": True,
-        "summary": {"papers": 0, "articles": 0, "questions": 0, "audioBytes": 0}
+        "papers": [selection_fixture], "testFixture": True,
+        "summary": {"papers": 1, "articles": 1, "questions": 1, "audioBytes": (media / "ci-playback.wav").stat().st_size}
     }), encoding="utf-8")
-    print(f"Staged application source and one original 24-second PCM test fixture: {output}")
+    print(f"Staged application source and two original suites sharing one 24-second PCM test recording: {output}")
 
 
 if __name__ == "__main__":
