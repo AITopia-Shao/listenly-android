@@ -39,7 +39,13 @@ async function captureDiagnostics(stage){
 async function recoverSystemUiDialog(stage){
  run(['shell','uiautomator','dump','/sdcard/listenly-smoke-ui.xml']);
  const xml=run(['shell','cat','/sdcard/listenly-smoke-ui.xml']);
- if(!xml.includes("System UI isn't responding")){
+ const systemUi=xml.includes("System UI isn't responding");
+ // A cold software-rendered API 36 AVD can stall its launcher before this
+ // script installs the app. Recognize that exact pre-install system process;
+ // an app ANR or an unknown dialog must still fail without being dismissed.
+ const launcher=stage==='startup'&&!result.install&&xml.includes("Quickstep isn't responding")&&/ANR in com\.android\.launcher3\b/.test(run(['logcat','-d','-v','threadtime']));
+ if(!systemUi&&!launcher){
+  if(xml.includes("isn't responding")){await writeFile(path.join(root,`unrecognized-anr-${stage}.xml`),xml);await writeFile(path.join(root,`unrecognized-anr-${stage}.png`),run(['exec-out','screencap','-p'],true))}
   assert.ok(!xml.includes("isn't responding"),'An application ANR must not be dismissed');
   return false;
  }
@@ -49,7 +55,7 @@ async function recoverSystemUiDialog(stage){
  assert.ok(button,'Known emulator System UI ANR has an accessible Wait button');
  const [,left,top,right,bottom]=button.map(Number);
  run(['shell','input','tap',String(Math.round((left+right)/2)),String(Math.round((top+bottom)/2))]);
- (result.systemUiRecoveries??=[]).push({stage,action:'Wait',process:'System UI'});
+ (result.systemUiRecoveries??=[]).push({stage,action:'Wait',process:launcher?'com.android.launcher3':'System UI',...(launcher?{beforeInstall:true}:{})});
  await wait(15000);
  run(['shell','uiautomator','dump','/sdcard/listenly-smoke-ui.xml']);
  const after=run(['shell','cat','/sdcard/listenly-smoke-ui.xml']);
@@ -159,13 +165,20 @@ try{
  // Drag the actual Android range control while paused; do not replace this
  // gesture with assigning currentTime or dispatching a synthetic input event.
  result.homePlayer={};
- const rangeTarget=await evaluate('(async()=>{var b=document.querySelector(".home-playback #seek");await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);var r=b.getBoundingClientRect(),a=document.querySelector("#audio");window.__homeRangeEvents=[];b.addEventListener("input",event=>window.__homeRangeEvents.push({trusted:event.isTrusted,value:Number(b.value)}));return {left:r.left,top:r.top,width:r.width,height:r.height,dpr:devicePixelRatio,time:a.currentTime,duration:a.duration,paused:a.paused,src:a.currentSrc,hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===b}})()');
+ const rangeTarget=await evaluate('(async()=>{var b=document.querySelector(".home-playback #seek");await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);var r=b.getBoundingClientRect(),a=document.querySelector("#audio");window.__homeRangeEvents=[];window.__homeRangeMoves=[];b.addEventListener("input",event=>window.__homeRangeEvents.push({trusted:event.isTrusted,value:Number(b.value)}));b.addEventListener("touchmove",event=>{var t=event.touches[0];if(t)window.__homeRangeMoves.push({type:event.type,trusted:event.isTrusted,x:t.clientX,y:t.clientY,time:performance.now()})},{passive:true});return {left:r.left,top:r.top,width:r.width,height:r.height,dpr:devicePixelRatio,time:a.currentTime,duration:a.duration,paused:a.paused,src:a.currentSrc,hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===b}})()');
  assert.ok(rangeTarget.hit&&rangeTarget.paused&&rangeTarget.width>80&&rangeTarget.duration>10,'Home timeline is visible, loaded and paused before its native drag');
  const trackWidth=rangeTarget.width-12,rangeY=rangeTarget.top+rangeTarget.height/2,startX=rangeTarget.left+6+trackWidth*Math.min(1,rangeTarget.time/rangeTarget.duration),endX=rangeTarget.left+6+trackWidth*.42;
+ result.homePlayer.rangeGesture={...rangeTarget,startX,endX,y:rangeY,durationMs:350};
  run(['shell','input','swipe',String(Math.round(startX*rangeTarget.dpr)),String(Math.round(rangeY*rangeTarget.dpr)),String(Math.round(endX*rangeTarget.dpr)),String(Math.round(rangeY*rangeTarget.dpr)),'350']);
  result.homePlayer.seek=await poll('(()=>{var a=document.querySelector("#audio"),b=document.querySelector(".home-playback #seek"),events=window.__homeRangeEvents;return events.length&&events.every(e=>e.trusted)&&a.paused&&Math.abs(a.currentTime-Number(b.value))<.2?{time:a.currentTime,value:Number(b.value),duration:a.duration,paused:a.paused,current:document.querySelector("#current-time").textContent,events:events}:null})()');
- assert.ok(Math.abs(result.homePlayer.seek.time-rangeTarget.duration*.42)<1,'Real native drag moves the home timeline to the intended part of the recording');
- result.homePlayer.rangeGesture={...rangeTarget,startX,endX,y:rangeY,durationMs:350};
+ result.homePlayer.rangeGesture.moveEvents=await evaluate('window.__homeRangeMoves');
+ const moves=result.homePlayer.rangeGesture.moveEvents;assert.ok(moves.length>=2&&moves.every(event=>event.trusted),'The drag delivers multiple real native touch moves');
+ // Android's input swipe sends its final UP at the command endpoint, while
+ // the last MOVE can be earlier. Blink updates the range from MOVE, not UP.
+ // Derive the precise expected value from the actual delivered MOVE instead.
+ const lastMove=moves[moves.length-1],expectedTime=Math.max(0,Math.min(1,(lastMove.x-rangeTarget.left-6)/trackWidth))*rangeTarget.duration;
+ result.homePlayer.rangeGesture.expectedTime=expectedTime;
+ assert.ok(result.homePlayer.seek.events.length>=2&&Math.abs(result.homePlayer.seek.time-expectedTime)<.3,'Native playback precisely follows the last actually delivered slider move');
  await tapControl('.home-playback [data-action=seek-relative][data-seconds="5"]');
  result.homePlayer.forward=await poll(`(()=>{var a=document.querySelector('#audio');return a.paused&&Math.abs(a.currentTime-${Math.min(rangeTarget.duration,result.homePlayer.seek.time+5)})<.3?{time:a.currentTime,paused:a.paused}:null})()`);
  await tapControl('.home-playback [data-action=seek-relative][data-seconds="-5"]');
