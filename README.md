@@ -8,6 +8,18 @@
 | --- | --- | --- |
 | ![首页](docs/screenshots/home.png) | ![精听](docs/screenshots/intensive.png) | ![做题](docs/screenshots/quiz.png) |
 
+## 1.0.9 的交互与材质调整
+
+同篇题目可分别展开、同时查看，选择答案只收起当前题。预览套卷或文章保留首页内容；点击右侧选择按钮，或文章实际开始播放后，才更新首页。日间／夜间切换与导入加号统一移到“我的”顶部。
+
+播放按钮采用统一的圆润图形、紧凑触控区域与按压反馈；套卷选择增加勾选过渡和轻微高光，浮动导航、菜单与卡片统一边缘、层次和材质。英文使用随 APK 离线提供的 Inter 字体，中文使用系统字体；减少动画设置继续生效。材料、草稿、答案与学习记录保持原有数据格式。
+
+本版通过 21 项主题／首页／资料库检查、24 组做题布局、18 组正文与安全区布局、86 项真实音频播放回归，以及 [Android 8 / 11 / 16 云端实装与跨套选择检查](https://github.com/AITopia-Shao/listenly-android/actions/runs/38863754801)。最终轻量版与公开演示版各通过 17 个原生播放场景和 8 项 Range 字节校验；历史失败和验证边界见 [界面与选择交互](docs/glass-ui.md)，安装包见 [1.0.9 发布页](https://github.com/AITopia-Shao/listenly-android/releases/tag/v1.0.9)。realme GT7 本版尚未直接复测。下图仅使用原创示例。
+
+| 套卷选择 · 日间 | 套卷选择 · 夜间 | 夜间精听 |
+| --- | --- | --- |
+| ![日间套卷选择](docs/screenshots/library-papers.png) | ![夜间套卷选择](docs/screenshots/library-dark.png) | ![夜间精听](docs/screenshots/intensive-dark.png) |
+
 ## 1.0.8 的整篇下拉答题
 
 做题页移除书面题干，仅显示题号与选项。同篇所有题目集中在一个页面，点击题目行下拉展开选项，选择后收起并回显完整内容，不自动跳题。选齐后统一“提交本篇”，再展开查看正误与解析，或查看整篇成绩；既有答案、草稿和音频对齐继续保留。
