@@ -32,6 +32,8 @@ const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.addres
 const click=selector=>page.locator(selector).first().click();
 const saved=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));
 const audioState=()=>page.locator('#audio').evaluate(a=>({time:a.currentTime,src:a.currentSrc,paused:a.paused,error:a.error?{code:a.error.code,message:a.error.message}:null}));
+async function watchActualPlayback(){await page.locator('#audio').evaluate(audio=>{window.__actualPlayback=null;audio.addEventListener('playing',()=>{window.__actualPlayback={src:audio.currentSrc,time:audio.currentTime}},{once:true})})}
+async function waitForActualPlayback(suffix){await page.waitForFunction(suffix=>{const a=document.querySelector('#audio'),played=window.__actualPlayback;return played&&played.src.endsWith(suffix)&&!a.paused&&!a.error&&a.currentSrc===played.src&&a.currentTime>played.time+.1},suffix)}
 function pass(label,details){result.checks.push({label,...(details?{details}:{})})}
 async function checkOutsideReader(route){
  assert.equal(await page.locator('[data-action="mode"]').count(),0,`${route} exposes no training mode selector`);
@@ -309,12 +311,15 @@ try{
  assert.equal(await page.locator('.paper-group-row').count(),1,'year selection filters paper directories');
  assert.equal(await page.locator('[data-action="open-paper"][data-paper="experience-selection"]').count(),1,'year selection retains the matching imported paper');
  const selectedControl=page.locator('[data-action="select-paper"][data-paper="experience-selection"]');
- await selectedControl.evaluate(button=>{window.__selectionControl=button;window.__selectionRow=button.closest('.paper-group-row');window.__selectionGlyph=button.querySelector('.selection-indicator svg')});
+ await selectedControl.evaluate(button=>{window.__selectionControl=button;window.__selectionRow=button.closest('.paper-group-row');window.__selectionGlyph=button.querySelector('.selection-indicator svg');window.__selectionMotion=[];for(const type of ['animationstart','transitionrun'])window.__selectionRow.addEventListener(type,event=>window.__selectionMotion.push({type,animation:event.animationName,property:event.propertyName,tag:event.target.tagName,pseudo:event.pseudoElement}))});
  await selectedControl.click();assert.equal(await selectedControl.getAttribute('aria-pressed'),'true','paper selection updates its check indicator');
  assert.ok(await selectedControl.evaluate(button=>window.__selectionControl===button&&window.__selectionRow===button.closest('.paper-group-row')&&window.__selectionGlyph===button.querySelector('.selection-indicator svg')),'selecting a suite preserves the row and indicator nodes for a continuous state transition');
  const selectedStyle=await selectedControl.evaluate(b=>({background:getComputedStyle(b).backgroundColor,outline:getComputedStyle(b).outlineStyle,shadow:getComputedStyle(b).boxShadow}));
  assert.equal(selectedStyle.background,'rgba(0, 0, 0, 0)','the selection glyph has no colored rectangle');assert.equal(selectedStyle.outline,'none');assert.equal(selectedStyle.shadow,'none');
  await page.waitForFunction(()=>Number(getComputedStyle(document.querySelector('.paper-group-row.is-selected'),'::before').opacity)===1);
+ const selectionMotion=await selectedControl.evaluate(()=>window.__selectionMotion);
+ assert.ok(selectionMotion.some(event=>event.type==='animationstart'&&event.animation==='selection-sheen'),'selecting a paper runs its material sheen on the retained row');
+ assert.ok(selectionMotion.some(event=>event.type==='transitionrun'&&event.tag==='path'&&['opacity','transform'].includes(event.property)),'the check mark animates into place on its retained SVG path');
  const nightGlass=await page.locator('.paper-group-row.is-selected').evaluate(e=>({background:getComputedStyle(e,'::before').backgroundColor,opacity:Number(getComputedStyle(e,'::before').opacity),image:getComputedStyle(e,'::before').backgroundImage}));
  const nightGlassColor=rgb(nightGlass.background);assert.ok(nightGlassColor[0]>nightGlassColor[1]&&nightGlassColor[1]>nightGlassColor[2],'night suite selection uses an orange tinted glass layer');assert.match(nightGlass.image,/gradient/,'selected suite retains the material highlight');
  const selectedTitle=page.locator('.paper-group-row.is-selected .paper-group-copy h3');
@@ -358,7 +363,7 @@ try{
  assert.equal(await numberStat('today-articles'),3,'audio completion and reload do not add quiz article completions');
  assert.equal(await page.locator('.history-row').count(),1,'completing only audio does not create a recent completed quiz');
  assert.doesNotMatch(await page.locator('.history-row').innerText(),/[1-8]\s*[–-]\s*[1-8]\s*题|分钟/);
- pass('paper selection, custom filters, clean titles and full-play listening credit follow completed user actions',{selectedStyle,creditedListeningSeconds:fullListening.completedListeningDays[dateKeys.today]});
+ pass('paper selection, custom filters, clean titles and full-play listening credit follow completed user actions',{selectedStyle,selectionMotion,creditedListeningSeconds:fullListening.completedListeningDays[dateKeys.today]});
  await click('[data-action="nav"][data-route="library"]');
  await click('[data-action="filter-menu"][data-filter="year"]');await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value=""]');
  const beforePreview=await saved();
@@ -380,7 +385,7 @@ try{
  await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'listenly-original');
  const libraryPlay=page.locator('[data-action="material-play"][data-paper="listenly-original"][data-article="morning"]');
  assert.equal(await libraryPlay.count(),1,'each library article has an independent playback control');
- await libraryPlay.click();await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&!a.error&&a.currentSrc.endsWith('/morning.wav')&&a.currentTime>.15});
+ await watchActualPlayback();await libraryPlay.click();await waitForActualPlayback('/morning.wav');
  assert.equal(await page.locator('.practice-header').count(),0,'library playback stays in the paper preview');
  assert.equal((await saved()).selectedPaper,'listenly-original','actual playback selects the library article paper');
  assert.deepEqual((await saved()).homeFocus,{paper:'listenly-original',article:'morning'},'actual playback records the article for the home focus');
@@ -401,7 +406,7 @@ try{
  await click('[data-action="nav"][data-route="home"]');assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),'experience-selection','home still displays its chosen collection after failed playback');
  await click('[data-action="nav"][data-route="library"]');await openLibraryArticle(page,'listenly-original','library');
  assert.equal((await saved()).selectedPaper,'experience-selection','reader preview still preserves the chosen collection');
- await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&!a.error&&a.currentSrc.endsWith('/library.wav')&&a.currentTime>.15});
+ await watchActualPlayback();await click('[data-action="play"]');await waitForActualPlayback('/library.wav');
  assert.equal((await saved()).selectedPaper,'listenly-original','actual reader playback selects its article paper');
  assert.deepEqual((await saved()).homeFocus,{paper:'listenly-original',article:'library'},'reader playback records the played article as home focus');
  await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').paused);await click('[data-action="nav"][data-route="home"]');
