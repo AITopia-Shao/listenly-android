@@ -216,7 +216,11 @@ export async function verifyReaderScrollAndArticleMenu(page){
  await submit.scrollIntoViewIfNeeded();
  const submitTop=await page.locator('.main-panel').evaluate(panel=>panel.scrollTop);
  await submit.click();
- assert.ok(Math.abs(await page.locator('.main-panel').evaluate(panel=>panel.scrollTop)-submitTop)<2,'submitting the article retains the article page position');
+ await page.waitForFunction(()=>[...document.querySelectorAll('.question-options-wrap')].every(wrap=>wrap.getBoundingClientRect().height<1));
+ const submittedScroll=await page.locator('.main-panel').evaluate(panel=>({top:panel.scrollTop,max:panel.scrollHeight-panel.clientHeight}));
+ assert.ok(Math.abs(submittedScroll.top-Math.min(submitTop,submittedScroll.max))<2,'submission retains the article position within the new bounds after expanded options close');
+ assert.equal(await page.locator('[data-action="toggle-question"][aria-expanded="true"]').count(),0,'whole-article submission closes every independently expanded answer list');
+ assert.equal(await page.locator('[data-action="view-result"]').evaluate(button=>button===document.activeElement),true,'submission places keyboard focus on the result action without scrolling it');
  assert.equal(await page.locator('.quiz-question').count(),2,'submitting keeps the complete article answer sheet on screen');
  await page.locator('[data-action="view-result"]').click();
  assert.match(await page.locator('.result-card').innerText(),/本篇完成\s+2\s*\/\s*2/,'results include every question submitted together');
