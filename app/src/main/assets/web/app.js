@@ -267,6 +267,7 @@ function refreshProfileStats(){const stats=activitySummary(state);for(const [key
 const readerPositions=new Map();
 function render(){
   closeSpeedMenu(false);
+  app.querySelectorAll('.dialog-shade').forEach(overlay=>overlay.remove());
   const previous=document.querySelector('.main-panel');
   if(previous&&previous.dataset.readerDisplay!=='hidden'){
     const bounds=previous.getBoundingClientRect();
