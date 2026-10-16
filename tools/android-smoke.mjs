@@ -145,14 +145,36 @@ try{
  assert.equal(result.darkHome.background,'rgb(0, 0, 0)','Night mode uses the requested pure-black background');
  await writeFile(path.join(root,'home-dark.png'),run(['exec-out','screencap','-p'],true));
  await tapControl('.focus-card [data-action=home-play]');await poll('document.querySelector("#audio").paused');
- const homeRow=await evaluate('(()=>{var b=document.querySelector(".home-paper-row [data-action=home-play]");return b?{paper:b.dataset.paper,article:b.dataset.article}:null})()');
+ result.homeRowsBeforePromotion=await evaluate('[...document.querySelectorAll(".home-paper-row [data-action=home-play]")].map(b=>({paper:b.dataset.paper,article:b.dataset.article}))');
+ const homeRow=await evaluate('(()=>{var hero=document.querySelector(".focus-play"),b=[...document.querySelectorAll(".home-paper-row [data-action=home-play]")].find(b=>b.dataset.paper!==hero.dataset.paper||b.dataset.article!==hero.dataset.article);return b?{paper:b.dataset.paper,article:b.dataset.article}:null})()');
  if(homeRow){
   await tapControl(`.home-paper-row [data-action=home-play][data-paper="${homeRow.paper}"][data-article="${homeRow.article}"]`);
   result.homePromotion=await poll(`(()=>{var b=document.querySelector('.focus-play'),a=document.querySelector('#audio');return b.dataset.paper==="${homeRow.paper}"&&b.dataset.article==="${homeRow.article}"&&!a.paused&&!a.error?{paper:b.dataset.paper,article:b.dataset.article,playing:!a.paused}:null})()`);
-  assert.equal(await evaluate(`document.querySelectorAll('.home-paper-row [data-action=home-play][data-paper="${homeRow.paper}"][data-article="${homeRow.article}"]').length`),0,'A native home play tap immediately promotes the article and removes its duplicate row');
+  assert.equal(await evaluate(`document.querySelectorAll('.home-paper-row [data-action=home-play][data-paper="${homeRow.paper}"][data-article="${homeRow.article}"]').length`),1,'A native home play tap updates the focus without removing its original list row');
+  result.homeRowsAfterPromotion=await evaluate('[...document.querySelectorAll(".home-paper-row [data-action=home-play]")].map(b=>({paper:b.dataset.paper,article:b.dataset.article}))');
+  assert.deepEqual(result.homeRowsAfterPromotion,result.homeRowsBeforePromotion,'Native home playback keeps the full paper list in its original order');
   assert.ok(!await evaluate('!!document.querySelector(".practice-header")'),'The native focus promotion stays on home');
   await tapControl('.focus-play');await poll('document.querySelector("#audio").paused');
  }
+ // Drag the actual Android range control while paused; do not replace this
+ // gesture with assigning currentTime or dispatching a synthetic input event.
+ result.homePlayer={};
+ const rangeTarget=await evaluate('(async()=>{var b=document.querySelector(".home-playback #seek");await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);var r=b.getBoundingClientRect(),a=document.querySelector("#audio");window.__homeRangeEvents=[];b.addEventListener("input",event=>window.__homeRangeEvents.push({trusted:event.isTrusted,value:Number(b.value)}));return {left:r.left,top:r.top,width:r.width,height:r.height,dpr:devicePixelRatio,time:a.currentTime,duration:a.duration,paused:a.paused,src:a.currentSrc,hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===b}})()');
+ assert.ok(rangeTarget.hit&&rangeTarget.paused&&rangeTarget.width>80&&rangeTarget.duration>10,'Home timeline is visible, loaded and paused before its native drag');
+ const trackWidth=rangeTarget.width-12,rangeY=rangeTarget.top+rangeTarget.height/2,startX=rangeTarget.left+6+trackWidth*Math.min(1,rangeTarget.time/rangeTarget.duration),endX=rangeTarget.left+6+trackWidth*.42;
+ run(['shell','input','swipe',String(Math.round(startX*rangeTarget.dpr)),String(Math.round(rangeY*rangeTarget.dpr)),String(Math.round(endX*rangeTarget.dpr)),String(Math.round(rangeY*rangeTarget.dpr)),'350']);
+ result.homePlayer.seek=await poll('(()=>{var a=document.querySelector("#audio"),b=document.querySelector(".home-playback #seek"),events=window.__homeRangeEvents;return events.length&&events.every(e=>e.trusted)&&a.paused&&Math.abs(a.currentTime-Number(b.value))<.2?{time:a.currentTime,value:Number(b.value),duration:a.duration,paused:a.paused,current:document.querySelector("#current-time").textContent,events:events}:null})()');
+ assert.ok(Math.abs(result.homePlayer.seek.time-rangeTarget.duration*.42)<1,'Real native drag moves the home timeline to the intended part of the recording');
+ result.homePlayer.rangeGesture={...rangeTarget,startX,endX,y:rangeY,durationMs:350};
+ await tapControl('.home-playback [data-action=seek-relative][data-seconds="5"]');
+ result.homePlayer.forward=await poll(`(()=>{var a=document.querySelector('#audio');return a.paused&&Math.abs(a.currentTime-${Math.min(rangeTarget.duration,result.homePlayer.seek.time+5)})<.3?{time:a.currentTime,paused:a.paused}:null})()`);
+ await tapControl('.home-playback [data-action=seek-relative][data-seconds="-5"]');
+ result.homePlayer.backward=await poll(`(()=>{var a=document.querySelector('#audio');return a.paused&&Math.abs(a.currentTime-${result.homePlayer.seek.time})<.3?{time:a.currentTime,paused:a.paused}:null})()`);
+ await tapControl('.focus-open');
+ result.homePlayer.reader=await poll(`(()=>{var a=document.querySelector('#audio');return document.querySelector('.practice-header')&&document.querySelector('[data-mode=intensive][aria-pressed=true]')&&document.querySelector('[data-display=hidden][aria-pressed=true]')&&a.currentSrc===${JSON.stringify(rangeTarget.src)}&&Math.abs(a.currentTime-${result.homePlayer.seek.time})<.3?{time:a.currentTime,src:a.currentSrc,paused:a.paused,intensive:true,hidden:true}:null})()`);
+ await tapControl('[data-action=nav][data-route=home]');
+ result.homePlayer.returned=await poll(`(()=>{var b=document.querySelector('.home-playback #seek'),a=document.querySelector('#audio');return b&&Math.abs(Number(b.value)-${result.homePlayer.seek.time})<.3&&a.paused?{time:a.currentTime,value:Number(b.value),paused:a.paused,seekCount:document.querySelectorAll('#seek').length}:null})()`);
+ assert.equal(result.homePlayer.returned.seekCount,1,'Home renders one shared playback timeline');
  await tapControl('[data-action=nav][data-route=profile]');
  await poll('document.querySelector(".statistics")');
  await tapControl('[data-action=theme][data-theme=light]');await poll('document.documentElement.dataset.theme==="light"');

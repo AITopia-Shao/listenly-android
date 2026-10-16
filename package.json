@@ -20,6 +20,7 @@
     "test:materials": "python -m unittest discover -s tests -p test_*.py",
     "test:experience": "node tests/theme-home-profile.test.mjs --demo",
     "test:lens": "node tests/nav-lens.test.mjs --demo",
+    "test:home": "node tests/home-player.test.mjs --demo",
     "test:quiz": "node tests/compact-quiz.test.mjs --demo"
   },
   "devDependencies": {
