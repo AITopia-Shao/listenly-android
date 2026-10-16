@@ -108,7 +108,65 @@ function yearOptions(){return [['','全部年份'],...[...new Set(papers.map(p=>
 function showFilterMenu(trigger){const type=trigger.dataset.filter,values=type==='year'?yearOptions():materialKinds;showChoiceMenu(trigger,values.map(([value,label])=>({value,label,selected:libraryFilters[type]===value})),type==='year'?'筛选年份':'筛选材料',type,value=>{libraryFilters[type]=value;trigger.querySelector('.filter-value').textContent=values.find(item=>item[0]===value)?.[1]||value;filterLibrary()})}
 function themeControl(){return `<div class="theme-control" data-current="${state.theme}" role="group" aria-label="外观"><button data-action="theme" data-theme="light" class="${state.theme==='light'?'active':''}" aria-pressed="${state.theme==='light'}">日间</button><button data-action="theme" data-theme="dark" class="${state.theme==='dark'?'active':''}" aria-pressed="${state.theme==='dark'}">夜间</button></div>`}
 function topbar(){return `<header class="topbar">${themeControl()}<button class="icon-btn" data-action="import" aria-label="导入材料">${icon('plus')}</button></header>`}
-function bottomNav(){return `<nav class="bottom-nav" aria-label="主导航">${[['home','headphones','听力'],['library','book','资料库'],['profile','user','我的']].map(([route,i,label])=>`<button class="nav-item ${state.route===route?'active':''}" data-action="nav" data-route="${route}" ${state.route===route?'aria-current="page"':''}>${icon(i)}<span>${label}</span></button>`).join('')}</nav>`}
+let navigationBar=null,navigationLens=null;
+function bottomNav(){return `<nav class="bottom-nav" aria-label="主导航"><svg class="nav-optics" aria-hidden="true" width="0" height="0"><defs><filter id="nav-lens-refraction" x="0" y="0" width="200" height="44" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feImage class="nav-displacement-map" x="0" y="0" width="200" height="44" preserveAspectRatio="none" result="lens-map"/><feDisplacementMap in="SourceGraphic" in2="lens-map" scale="24" xChannelSelector="R" yChannelSelector="G"/></filter></defs></svg><div class="nav-lens" aria-hidden="true"></div>${[['home','headphones','听力'],['library','book','资料库'],['profile','user','我的']].map(([route,i,label])=>`<button class="nav-item ${state.route===route?'active':''}" data-action="nav" data-route="${route}" ${state.route===route?'aria-current="page"':''}><span class="nav-content">${icon(i)}<span>${label}</span></span></button>`).join('')}</nav>`}
+function createNavigationLens(bar){
+  const lens=bar.querySelector('.nav-lens'),buttons=[...bar.querySelectorAll('.nav-item')],reduced=matchMedia('(prefers-reduced-motion: reduce)');
+  let x=0,velocity=0,target=0,width=0,barWidth=0,top=0,frame=0,lastTime=0,route='',attached=false;
+  const centers=[];
+  function opticalMap(){
+    // The flat centre stays undistorted; the curved rim samples further inside.
+    // R/G encode the surface normal, rather than a uniform diagonal gradient.
+    const canvas=document.createElement('canvas'),w=Math.max(1,Math.round(width*2)),h=88;
+    canvas.width=w;canvas.height=h;const context=canvas.getContext('2d');if(!context)return;
+    const pixels=context.createImageData(w,h),radius=22,halfWidth=width/2;
+    function distance(px,py){const qx=Math.abs(px-halfWidth)-(halfWidth-radius),qy=Math.abs(py-22);return Math.hypot(Math.max(qx,0),Math.max(qy,0))+Math.min(Math.max(qx,qy),0)-radius}
+    for(let y=0;y<h;y++)for(let column=0;column<w;column++){
+      const px=(column+.5)/2,py=(y+.5)/2,d=distance(px,py),inside=Math.max(0,-d),edge=Math.max(0,1-inside/10),bend=d<=0?6*edge*edge:0;
+      let nx=distance(px+.25,py)-distance(px-.25,py),ny=distance(px,py+.25)-distance(px,py-.25);const length=Math.hypot(nx,ny)||1;nx/=length;ny/=length;
+      const offset=(y*w+column)*4;pixels.data[offset]=Math.round(128-nx*bend/24*255);pixels.data[offset+1]=Math.round(128-ny*bend/24*255);pixels.data[offset+2]=128;pixels.data[offset+3]=255;
+    }
+    context.putImageData(pixels,0,0);const map=bar.querySelector('.nav-displacement-map'),filter=bar.querySelector('#nav-lens-refraction');
+    map.setAttribute('width',String(width));filter.setAttribute('width',String(width));
+    const url=canvas.toDataURL();map.setAttribute('href',url);map.setAttributeNS('http://www.w3.org/1999/xlink','href',url);
+  }
+  function measure(){
+    const bounds=bar.getBoundingClientRect(),css=getComputedStyle(bar),borderLeft=parseFloat(css.borderLeftWidth)||0,borderTop=parseFloat(css.borderTopWidth)||0,first=buttons[0].getBoundingClientRect(),nextWidth=first.width-8;
+    barWidth=bounds.width-borderLeft-(parseFloat(css.borderRightWidth)||0);
+    buttons.forEach((button,index)=>{const r=button.getBoundingClientRect();centers[index]=r.left-bounds.left-borderLeft+r.width/2});
+    top=first.top-bounds.top-borderTop+(first.height-44)/2;
+    if(Math.abs(nextWidth-width)>.5){width=nextWidth;lens.style.width=`${width}px`;opticalMap()}
+    lens.style.top=`${top}px`;
+  }
+  function paint(){
+    const energy=Math.min(1,Math.abs(velocity)/1600),stretch=1+energy*.22,squash=1-energy*.13,lean=Math.max(-2.4,Math.min(2.4,velocity/650));
+    const extent=(width*stretch+44*Math.abs(Math.tan(lean*Math.PI/180)))/2,center=Math.max(extent+3,Math.min(barWidth-extent-3,x));
+    lens.style.transform=`translate3d(${center-width/2}px,0,0) scale(${stretch},${squash}) skewX(${lean}deg)`;
+    buttons.forEach((button,index)=>{const proximity=Math.exp(-Math.pow((centers[index]-center)/(width*.58),2));button.querySelector('.nav-content').style.transform=`translateY(${-proximity*.6}px) scale(${1+proximity*.045})`});
+  }
+  function stop(){if(frame)cancelAnimationFrame(frame);frame=0;lastTime=0}
+  function tick(time){
+    frame=0;if(!bar.isConnected){stop();attached=false;return}
+    const elapsed=Math.min(.064,Math.max(.001,(time-(lastTime||time-16.667))/1000));lastTime=time;
+    const steps=Math.ceil(elapsed/(1/120)),dt=elapsed/steps;
+    for(let step=0;step<steps;step++){velocity+=((target-x)*460-velocity*31)*dt;x+=velocity*dt}
+    if(Math.abs(target-x)<.08&&Math.abs(velocity)<1){x=target;velocity=0;lastTime=0;paint();return}
+    paint();frame=requestAnimationFrame(tick);
+  }
+  function select(nextRoute,instant=false){
+    const index=buttons.findIndex(button=>button.dataset.route===nextRoute);if(index<0)return;
+    buttons.forEach((button,i)=>{button.classList.toggle('active',i===index);if(i===index)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current')});
+    const reattached=!attached;attached=true;measure();target=centers[index];
+    if(instant||reattached||reduced.matches){stop();x=target;velocity=0;paint()}
+    else if(route!==nextRoute&&!frame){lastTime=0;frame=requestAnimationFrame(tick)}
+    route=nextRoute;
+  }
+  function suspend(){stop();attached=false}
+  function realign(){if(bar.isConnected)select(route,true)}
+  window.addEventListener('resize',realign);
+  if(reduced.addEventListener)reduced.addEventListener('change',realign);else if(reduced.addListener)reduced.addListener(realign);
+  return {select,suspend};
+}
 function modeControl(){return `<div class="mode-control" data-current="${state.mode}" role="group" aria-label="训练模式"><button data-action="mode" data-mode="intensive" class="${state.mode==='intensive'?'active':''}" aria-pressed="${state.mode==='intensive'}">精听</button><button data-action="mode" data-mode="exam" class="${state.mode==='exam'?'active':''}" aria-pressed="${state.mode==='exam'}">做题</button></div>`}
 function allArticles(){return papers.flatMap(p=>p.articles.map(a=>({p,a})))}
 function materialRow(p,a,index=0){
@@ -218,7 +276,14 @@ function render(){
   const content=state.route==='home'?home():state.route==='practice'?practice():state.route==='library'?library():profile();
   const practicing=state.route==='practice';
   document.body.classList.toggle('is-practicing',practicing);
-  app.innerHTML=`<div class="app-shell ${practicing?'practice-shell':''}">${content}</div>${practicing?'':bottomNav()}`;
+  // Keep the lens, buttons and their physical motion alive across route changes.
+  const shell=document.createElement('div');shell.className=`app-shell ${practicing?'practice-shell':''}`;shell.innerHTML=content;
+  const oldShell=app.querySelector('.app-shell');if(oldShell)app.replaceChild(shell,oldShell);else app.appendChild(shell);
+  if(practicing){navigationLens?.suspend();navigationBar?.remove()}
+  else{
+    if(!navigationBar){const holder=document.createElement('div');holder.innerHTML=bottomNav();navigationBar=holder.firstElementChild}
+    if(!navigationBar.isConnected)app.appendChild(navigationBar);if(!navigationLens)navigationLens=createNavigationLens(navigationBar);navigationLens.select(state.route);
+  }
   const panel=document.querySelector('.main-panel');
   const position=panel&&previous?.dataset.readerKey===panel.dataset.readerKey?readerPositions.get(panel.dataset.readerKey):null;
   if(position&&panel.dataset.readerDisplay!=='hidden'){

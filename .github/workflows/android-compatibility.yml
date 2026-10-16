@@ -19,6 +19,7 @@ on:
       - tests/audio-replay.test.mjs
       - tests/activity.test.mjs
       - tests/theme-home-profile.test.mjs
+      - tests/nav-lens.test.mjs
       - tests/library-navigation.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
@@ -55,6 +56,7 @@ on:
       - tests/audio-replay.test.mjs
       - tests/activity.test.mjs
       - tests/theme-home-profile.test.mjs
+      - tests/nav-lens.test.mjs
       - tests/library-navigation.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
@@ -121,6 +123,7 @@ jobs:
           npm run test:replay
           npm run test:experience
           npm run test:quiz
+          npm run test:lens
       - name: Save the original demo test APK and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -137,6 +140,7 @@ jobs:
             .build/replay-browser/latest/result.json
             .build/theme-home-profile/
             .build/compact-quiz/
+            .build/nav-lens/
           include-hidden-files: true
           retention-days: 14
 
