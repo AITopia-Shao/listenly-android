@@ -193,7 +193,7 @@ try{
  assert.equal(await evaluate('document.querySelector("#audio").playbackRate'),result.speedBefore,'Opening the native speed menu keeps the current rate');
  assert.deepEqual(await evaluate('[...document.querySelectorAll(".speed-popover [role=menuitemradio]")].map(b=>Number(b.dataset.speed))'),[.75,1,1.25,1.5],'Native popup has explicit playback rate choices');
  result.speedChoiceTap=await tapControl('.speed-popover [data-action=set-speed][data-speed="1.25"]');
- result.speedPlayback=await poll('(()=>{var a=document.querySelector("#audio");return !document.querySelector(".speed-popover")&&!a.paused&&a.playbackRate===1.25&&!a.error?{time:a.currentTime,rate:a.playbackRate}:null})()');
+ result.speedPlayback=await poll(`(()=>{var a=document.querySelector("#audio");return !document.querySelector(".speed-popover")&&!a.paused&&a.playbackRate===1.25&&!a.error&&a.currentTime>${result.playback.time}+.1?{time:a.currentTime,rate:a.playbackRate}:null})()`);
  assert.ok(result.speedPlayback.time>result.playback.time,'Playback continues while the native menu changes speed');
  assert.ok(await evaluate('window.__speedAudio===document.querySelector("#audio")&&window.__speedReader===document.querySelector(".main-panel")'),'Native speed adjustment retains the existing audio and reader');
  assert.equal(await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).speed'),1.25,'Native speed selection is saved');
@@ -365,6 +365,7 @@ try{
  result.paperSelectionTap=await tapControl(`[data-action=select-paper][data-paper="${circlePaper}"]`);
  assert.equal(await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').getAttribute('aria-pressed')`),'true','The right circular selection button updates the chosen paper');
  await tapControl('[data-action=nav][data-route=home]');
+ await poll('document.querySelector(".focus-card")');
  result.selectedPaperHome=await evaluate('({paper:document.querySelector(".focus-play").dataset.paper,listed:[...document.querySelectorAll(".home-paper-row [data-action=home-play]")].map(b=>b.dataset.paper),saved:JSON.parse(localStorage.getItem("listenly.state.v1")).selectedPaper})');
  assert.equal(result.selectedPaperHome.paper,circlePaper,'The explicitly selected paper supplies the home focus');
  assert.ok(result.selectedPaperHome.listed.every(paper=>paper===circlePaper),'Home lists only articles in the chosen paper');
