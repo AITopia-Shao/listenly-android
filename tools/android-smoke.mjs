@@ -16,8 +16,26 @@ await mkdir(root,{recursive:true});
 const run=(args,binary=false)=>execFileSync(adb,['-s',serial,...args],{encoding:binary?undefined:'utf8',timeout:120000,maxBuffer:16*1024*1024,windowsHide:true});
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const httpJSON=url=>new Promise((resolve,reject)=>http.get(url,response=>{let body='';response.on('data',data=>body+=data);response.on('end',()=>{try{resolve(JSON.parse(body))}catch(error){reject(error)}})}).on('error',reject));
-let socket,forwarded=false;
+let socket,forwarded=false,diagnosticEvaluate;
 const result={serial,label,apk:path.resolve(apk),checkedAt:new Date().toISOString(),...(publicDemo?{content:'original-public-demo'}:{})};
+// Observe the page without changing playback, app state or test assertions.
+// Register on future documents too, because the smoke check intentionally reloads.
+const diagnosticScript=`(()=>{
+ if(window.__listenlyDiagnosticSnapshot)return;
+ var trace={startedAt:Date.now(),mediaEvents:[],playCalls:[],pageErrors:[]};
+ function audioState(){var a=document.querySelector('#audio');return a?{attributeSrc:a.getAttribute('src'),src:a.src,currentSrc:a.currentSrc,paused:a.paused,ended:a.ended,seeking:a.seeking,currentTime:a.currentTime,duration:Number.isFinite(a.duration)?a.duration:null,readyState:a.readyState,networkState:a.networkState,pendingTime:a.dataset.pendingTime===undefined?null:a.dataset.pendingTime,playbackRate:a.playbackRate,error:a.error?{code:a.error.code,message:a.error.message||''}:null}:null}
+ function problem(kind,event){var error=event.error||event.reason;trace.pageErrors.push({kind:kind,at:Date.now(),time:performance.now(),message:event.message||String(error&&error.message||error||''),name:error&&error.name||null,stack:error&&error.stack||null,filename:event.filename||null,line:event.lineno||null,column:event.colno||null})}
+ window.addEventListener('error',function(event){problem('error',event)});
+ window.addEventListener('unhandledrejection',function(event){problem('unhandledrejection',event)});
+ function watchAudio(){var a=document.querySelector('#audio');if(!a||a.__listenlyDiagnosticObserved)return;a.__listenlyDiagnosticObserved=true;['play','playing','pause','error','abort','emptied','loadstart','loadedmetadata','loadeddata','canplay','canplaythrough','waiting','stalled','suspend','seeking','seeked','ratechange','ended'].forEach(function(type){a.addEventListener(type,function(){trace.mediaEvents.push({type:type,at:Date.now(),time:performance.now(),audio:audioState()})})});var originalPlay=a.play;a.play=function(){var call={at:Date.now(),time:performance.now(),before:audioState(),status:'pending'};trace.playCalls.push(call);var returned;try{returned=originalPlay.apply(this,arguments)}catch(error){call.status='threw';call.name=error.name;call.message=error.message;throw error}if(returned&&typeof returned.then==='function')returned.then(function(){call.status='resolved';call.completedAt=Date.now();call.after=audioState()},function(error){call.status='rejected';call.completedAt=Date.now();call.name=error&&error.name;call.message=error&&error.message;call.after=audioState()});return returned}}
+ watchAudio();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',watchAudio,{once:true});
+ window.__listenlyDiagnosticSnapshot=function(){var saved=null,stateError=null;try{var s=JSON.parse(localStorage.getItem('listenly.state.v1')||'{}');saved={active:s.active||null,homeFocus:s.homeFocus===undefined?null:s.homeFocus,selectedPaper:s.selectedPaper||null}}catch(error){stateError=String(error)}return {startedAt:trace.startedAt,capturedAt:Date.now(),time:performance.now(),url:location.href,visibility:document.visibilityState,audio:audioState(),saved:saved,stateError:stateError,views:{home:!!document.querySelector('.focus-card'),library:!!document.querySelector('#library-list'),practice:!!document.querySelector('.practice-header'),profile:!!document.querySelector('.statistics')},mediaEvents:trace.mediaEvents,playCalls:trace.playCalls,pageErrors:trace.pageErrors}};
+})()`;
+async function captureDiagnostics(stage){
+ if(!diagnosticEvaluate)return;
+ try{const snapshot=await diagnosticEvaluate('window.__listenlyDiagnosticSnapshot&&window.__listenlyDiagnosticSnapshot()');if(snapshot){snapshot.stage=stage;result.diagnostics=snapshot;(result.diagnosticSnapshots??=[]).push(snapshot)}}
+ catch(error){(result.diagnosticCaptureErrors??=[]).push({stage,error:String(error?.stack||error)})}
+}
 async function recoverSystemUiDialog(stage){
  run(['shell','uiautomator','dump','/sdcard/listenly-smoke-ui.xml']);
  const xml=run(['shell','cat','/sdcard/listenly-smoke-ui.xml']);
@@ -74,6 +92,9 @@ try{
  socket.addEventListener('message',event=>{const message=JSON.parse(event.data);if(message.id&&pending.has(message.id)){const callback=pending.get(message.id);pending.delete(message.id);message.error?callback.reject(new Error(JSON.stringify(message.error))):callback.resolve(message.result)}});
  const rpc=(method,params={})=>new Promise((resolve,reject)=>{const key=++id;pending.set(key,{resolve,reject});socket.send(JSON.stringify({id:key,method,params}));setTimeout(()=>{if(pending.delete(key))reject(new Error(`${method} timed out`))},15000).unref()});
  const evaluate=async expression=>{const response=await rpc('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(response.exceptionDetails)throw new Error(JSON.stringify(response.exceptionDetails));return response.result.value};
+ diagnosticEvaluate=evaluate;
+ await rpc('Page.addScriptToEvaluateOnNewDocument',{source:diagnosticScript});
+ await evaluate(diagnosticScript);
  const poll=async expression=>{for(let i=0;i<30;i++){const value=await evaluate(expression);if(value)return value;await wait(500)}throw new Error(`UI readiness failed: ${expression}`)};
  const tapControl=async selector=>{
   // A DOM update can precede the WebView compositor's native hit-test frame.
@@ -98,6 +119,7 @@ try{
  assert.equal(await evaluate('document.querySelectorAll("[data-action=mode]").length'),0,'Home has no training mode controls');
  assert.equal(await evaluate('document.querySelectorAll(".theme-control button,[data-action=import]").length'),0,'Home reserves appearance and folder import controls for profile');
  assert.equal(await evaluate('document.querySelectorAll(".section-header button").length'),0,'Home has no redundant All entrance');
+ await captureDiagnostics('before-first-home-play');
  await tapControl('.focus-card [data-action=home-play]');
  result.homePlayback=await poll('(()=>{var a=document.querySelector("#audio");return !a.paused&&a.currentTime>0&&!a.error?{time:a.currentTime,paused:a.paused}:null})()');
  assert.ok(!await evaluate('!!document.querySelector(".practice-header")'),'Home audio does not open the reader');
@@ -111,7 +133,7 @@ try{
  result.profileAppearance=await evaluate('({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color,paused:document.querySelector("#audio").paused,error:document.querySelector("#audio").error})');
  assert.equal(result.profileAppearance.background,'rgb(0, 0, 0)','Night mode uses the requested pure-black background on profile');
  assert.ok(result.profileAppearance.paused&&!result.profileAppearance.error,'Changing profile appearance keeps the naturally paused audio error-free');
- await evaluate('window.__appearanceReloadProbe=true');await rpc('Page.reload');
+ await evaluate('window.__appearanceReloadProbe=true');await captureDiagnostics('before-appearance-reload');await rpc('Page.reload');
  await poll('!window.__appearanceReloadProbe&&document.querySelector(".focus-card")');
  assert.equal(await evaluate('document.documentElement.dataset.theme'),'dark','Night mode survives a page reload');
  assert.equal(await evaluate('document.querySelectorAll(".theme-control button,[data-action=import]").length'),0,'Reloaded home keeps appearance and import controls in profile');
@@ -315,7 +337,7 @@ try{
  await poll('document.querySelector(".result-card")');
  await evaluate('document.querySelector("[data-action=nav][data-route=home]").click()');
  await evaluate('window.__listenlyReloadProbe=true');
- await rpc('Page.reload');
+ await captureDiagnostics('before-answer-reload');await rpc('Page.reload');
  await poll('!window.__listenlyReloadProbe && document.querySelector(".focus-card")');
  result.restoredAnswers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
  assert.deepEqual(result.restoredAnswers,result.answer,'Answers survive WebView page reload');
@@ -400,8 +422,9 @@ try{
  assert.equal(result.after,result.pid);
  result.verified=true;
  console.log(`PASS Android ${result.android} (API ${result.api}): install, launch, page, native assets/audio, touch playback, mode alignment and answer interaction.`);
-}catch(error){result.verified=false;result.error=String(error?.stack||error);console.error(result.error);process.exitCode=1}
+}catch(error){result.verified=false;result.error=String(error?.stack||error);await captureDiagnostics('failure');console.error(result.error);process.exitCode=1}
 finally{
+ if(result.verified)await captureDiagnostics('success');
  socket?.close();
  for(const [name,args,binary] of [['crash.log',['logcat','-d','-b','crash','-v','threadtime'],false],['logcat.log',['logcat','-d','-v','threadtime'],false],['screen.png',['exec-out','screencap','-p'],true]]){
    try{await writeFile(path.join(root,name),run(args,binary))}catch(error){result[name+'Error']=String(error.message)}
