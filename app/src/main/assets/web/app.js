@@ -141,7 +141,7 @@ function createNavigationLens(bar){
     const url=canvas.toDataURL();map.setAttribute('href',url);map.setAttributeNS('http://www.w3.org/1999/xlink','href',url);
   }
   function measure(){
-    const bounds=bar.getBoundingClientRect(),css=getComputedStyle(bar),borderLeft=parseFloat(css.borderLeftWidth)||0,borderTop=parseFloat(css.borderTopWidth)||0,first=buttons[0].getBoundingClientRect(),nextWidth=first.width-8;
+    const bounds=bar.getBoundingClientRect(),css=getComputedStyle(bar),borderLeft=parseFloat(css.borderLeftWidth)||0,borderTop=parseFloat(css.borderTopWidth)||0,first=buttons[0].getBoundingClientRect(),nextWidth=buttons[0].offsetWidth-8;
     barWidth=bounds.width-borderLeft-(parseFloat(css.borderRightWidth)||0);
     buttons.forEach((button,index)=>{const r=button.getBoundingClientRect();centers[index]=r.left-bounds.left-borderLeft+r.width/2});
     top=first.top-bounds.top-borderTop+(first.height-44)/2;

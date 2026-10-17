@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import wave
+from argparse import Namespace
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("prepare_demo_assets", ROOT / "tools" / "prepare-demo-assets.py")
@@ -20,6 +21,22 @@ builder_spec.loader.exec_module(ci_builder)
 
 
 class PublicDemoAssetTests(unittest.TestCase):
+    def test_both_builders_accept_approved_modules_and_reject_unexpected_assets(self):
+        # Run the actual builder's complete asset gate, stopping at the absent
+        # SDK. This catches drift between staging and the packaging allowlist.
+        for public in (True, False):
+            stage_root = ROOT / '.build' / ('demo' if public else 'ci')
+            stage_root.mkdir(parents=True, exist_ok=True)
+            with self.subTest(public=public), tempfile.TemporaryDirectory(prefix='builder-contract-', dir=stage_root) as temporary:
+                output = Path(temporary) / 'main'
+                (assets if public else ci_assets).prepare(output)
+                args = Namespace(sdk=Path(temporary) / 'absent-sdk', java_home=Path(temporary) / 'absent-jdk', build_tools='36.0.0', compile_api=36, demo=public, staged_main=output, output=Path(temporary) / 'test.apk')
+                with self.assertRaisesRegex(FileNotFoundError, 'Required build tool not found'):
+                    ci_builder.build(args)
+                (output / 'assets' / 'web' / 'unapproved-private-audio.mp3').write_bytes(b'not real media')
+                with self.assertRaisesRegex(ValueError, 'Unexpected or missing CI assets'):
+                    ci_builder.build(args)
+
     def test_original_audio_and_sentence_timestamps_are_complete(self):
         demo, recordings = assets.original_example_files()
         self.assertEqual(len(demo["articles"]), 2)
