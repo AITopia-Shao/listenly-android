@@ -95,6 +95,8 @@ public final class MainActivity extends Activity {
         webView = null;
         try {
         webView = new WebView(this);
+        webView.setVerticalScrollBarEnabled(false);
+        webView.setHorizontalScrollBarEnabled(false);
         webView.setBackgroundColor(darkTheme ? Color.BLACK : Color.rgb(250, 250, 250));
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -437,7 +439,7 @@ public final class MainActivity extends Activity {
             CopyState state = new CopyState();
             copyChildren(tree, rootId, "", destination, id, state, 0);
             if (state.count == 0) throw new IOException("所选文件夹没有可读取的文件");
-            JSONObject manifest = new JSONObject().put("id", id).put("mode", mode).put("name", name)
+            JSONObject manifest = new JSONObject().put("id", id).put("mode", mode).put("name", name).put("intensiveStandard", 2)
                     .put("importedAt", System.currentTimeMillis()).put("files", state.files);
             File manifests = new File(getFilesDir(), "import-manifests");
             if (!manifests.exists() && !manifests.mkdirs()) throw new IOException("无法创建导入记录目录");

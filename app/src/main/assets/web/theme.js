@@ -28,10 +28,11 @@ function rgba(value) {
 export function transitionTheme(theme, onFinish) {
   cancelAnimationFrame(frame);
   if (!tokens.size) for (const sheet of document.styleSheets) { try { collect(sheet.cssRules); } catch {} }
-  const before = getComputedStyle(root), start = new Map();
+  const before = getComputedStyle(root), start = new Map(), fromWallpaper=Number(before.getPropertyValue('--wallpaper-night'))||0;
   for (const name of tokens) start.set(name, before.getPropertyValue(name).trim());
   for (const name of tokens) root.style.removeProperty(name);
   root.dataset.theme = theme;
+  const toWallpaper=theme==='dark'?1:0;
   const target = getComputedStyle(root), colors = [];
   for (const name of tokens) {
     const a = start.get(name), b = target.getPropertyValue(name).trim();
@@ -41,6 +42,7 @@ export function transitionTheme(theme, onFinish) {
   const finish = () => {
     frame = 0; delete root.dataset.themeTransition;
     for (const name of tokens) root.style.removeProperty(name);
+    root.style.removeProperty('--wallpaper-night');
     onFinish?.();
   };
   if (!initialized || matchMedia('(prefers-reduced-motion: reduce)').matches || !colors.length) {
@@ -50,6 +52,7 @@ export function transitionTheme(theme, onFinish) {
   root.dataset.themeTransition = 'true';
   function paint(now) {
     const p = Math.min(1, (now - began) / 460), eased = p * p * (3 - 2 * p);
+    root.style.setProperty('--wallpaper-night',String(fromWallpaper+(toWallpaper-fromWallpaper)*eased));
     for (const {name, template, from, to} of colors) {
       let index = 0;
       root.style.setProperty(name, template.replace(colorPattern, () => {

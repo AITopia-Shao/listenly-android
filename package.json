@@ -1,6 +1,6 @@
 {
   "name": "listenly-android",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -23,7 +23,9 @@
     "test:home": "node tests/home-player.test.mjs --demo",
     "test:quiz": "node tests/compact-quiz.test.mjs --demo",
     "test:glass": "node tests/glass-controls.test.mjs --demo",
-    "test:playback": "node tests/playback-modes-browser.test.mjs --demo"
+    "test:playback": "node tests/playback-modes-browser.test.mjs --demo",
+    "test:wallpaper": "node tests/wallpaper-flow.test.mjs --demo",
+    "test:import-media": "node tests/import-media-browser.test.mjs"
   },
   "devDependencies": {
     "@babel/core": "7.29.7",

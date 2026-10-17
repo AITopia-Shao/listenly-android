@@ -1,5 +1,7 @@
 # 第三方声明 / Third-party notices
 
+可选个人版 Tahoe 壁纸来源于 Basic Apple Guy，原图不进入公共仓库、云端测试或公开演示包，也不受本项目 MIT 许可证授权。提交的 `wallpapers/day.svg`、`wallpapers/night.svg` 和播放蒙版为项目原创矢量资源。[来源与构建说明](docs/wallpapers-and-flow.md)。
+
 本项目原创代码、文档按根目录 `LICENSE` 的 MIT 许可证发布；`examples/demo/` 英语示例按其材料声明使用 CC0-1.0。第三方组件保留下列许可证；历史试题、译文、录音及用户导入材料不因本项目开源而获得再发布许可。
 
 | 组件 | 版本 | 用途 | 许可证 |

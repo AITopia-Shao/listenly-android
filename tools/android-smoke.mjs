@@ -103,6 +103,7 @@ try{
  await evaluate(diagnosticScript);
  const poll=async expression=>{for(let i=0;i<30;i++){const value=await evaluate(expression);if(value)return value;await wait(500)}throw new Error(`UI readiness failed: ${expression}`)};
  const tapControl=async selector=>{
+  if(selector.includes('[data-action=nav]')&&selector.includes('[data-route=library]')&&!await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`)){await tapControl('[data-action=nav][data-route=home]');await poll('document.querySelector(".focus-card")')}
   // A DOM update can precede the WebView compositor's native hit-test frame.
   // Measure two presented frames, then send exactly one real Android tap.
   const tap=await poll(`(async()=>{var selector=${JSON.stringify(selector)},b=document.querySelector(selector);if(!b)return null;await new Promise(requestAnimationFrame);var before=b.getBoundingClientRect();await new Promise(requestAnimationFrame);if(!b.isConnected)return null;var r=b.getBoundingClientRect();if(Math.abs(before.left-r.left)>.5||Math.abs(before.top-r.top)>.5||Math.abs(before.width-r.width)>.5||Math.abs(before.height-r.height)>.5)return null;var x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);window.__listenlyNativeTap={selector:selector,events:[],click:null};var probe=window.__listenlyNativeTap;var listener=function(event){var record={type:event.type,trusted:event.isTrusted,x:event.clientX,y:event.clientY,matches:event.target.closest(selector)===b,time:performance.now()};probe.events.push(record);if(event.type==='click'){probe.click=record;['pointerdown','pointerup','pointercancel','click'].forEach(function(type){document.removeEventListener(type,listener,true)})}};['pointerdown','pointerup','pointercancel','click'].forEach(function(type){document.addEventListener(type,listener,true)});return {x:x,y:y,scale:devicePixelRatio,visible:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,hit:hit&&hit.closest(selector)===b,stableFrames:2}})()`);
@@ -167,7 +168,7 @@ try{
  result.homePlayer={};
  const rangeTarget=await evaluate('(async()=>{var b=document.querySelector(".home-playback #seek");await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);var r=b.getBoundingClientRect(),a=document.querySelector("#audio");window.__homeRangeEvents=[];window.__homeRangeMoves=[];b.addEventListener("input",event=>window.__homeRangeEvents.push({trusted:event.isTrusted,value:Number(b.value)}));b.addEventListener("touchmove",event=>{var t=event.touches[0];if(t)window.__homeRangeMoves.push({type:event.type,trusted:event.isTrusted,x:t.clientX,y:t.clientY,time:performance.now()})},{passive:true});return {left:r.left,top:r.top,width:r.width,height:r.height,dpr:devicePixelRatio,time:a.currentTime,duration:a.duration,paused:a.paused,src:a.currentSrc,hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===b}})()');
  assert.ok(rangeTarget.hit&&rangeTarget.paused&&rangeTarget.width>80&&rangeTarget.duration>10,'Home timeline is visible, loaded and paused before its native drag');
- const trackWidth=rangeTarget.width-12,rangeY=rangeTarget.top+rangeTarget.height/2,startX=rangeTarget.left+6+trackWidth*Math.min(1,rangeTarget.time/rangeTarget.duration),endX=rangeTarget.left+6+trackWidth*.42;
+ const trackWidth=rangeTarget.width-18,rangeY=rangeTarget.top+rangeTarget.height/2,startX=rangeTarget.left+9+trackWidth*Math.min(1,rangeTarget.time/rangeTarget.duration),endX=rangeTarget.left+9+trackWidth*(rangeTarget.time/rangeTarget.duration<.5?.75:.25);
  result.homePlayer.rangeGesture={...rangeTarget,startX,endX,y:rangeY,durationMs:350};
  run(['shell','input','swipe',String(Math.round(startX*rangeTarget.dpr)),String(Math.round(rangeY*rangeTarget.dpr)),String(Math.round(endX*rangeTarget.dpr)),String(Math.round(rangeY*rangeTarget.dpr)),'350']);
  result.homePlayer.seek=await poll('(()=>{var a=document.querySelector("#audio"),b=document.querySelector(".home-playback #seek"),events=window.__homeRangeEvents;return events.length&&events.every(e=>e.trusted)&&a.paused&&Math.abs(a.currentTime-Number(b.value))<.2?{time:a.currentTime,value:Number(b.value),duration:a.duration,paused:a.paused,current:document.querySelector("#current-time").textContent,events:events}:null})()');
@@ -176,7 +177,7 @@ try{
  // Android's input swipe sends its final UP at the command endpoint, while
  // the last MOVE can be earlier. Blink updates the range from MOVE, not UP.
  // Derive the precise expected value from the actual delivered MOVE instead.
- const lastMove=moves[moves.length-1],expectedTime=Math.max(0,Math.min(1,(lastMove.x-rangeTarget.left-6)/trackWidth))*rangeTarget.duration;
+ const lastMove=moves[moves.length-1],expectedTime=Math.max(0,Math.min(1,(lastMove.x-rangeTarget.left-9)/trackWidth))*rangeTarget.duration;
  result.homePlayer.rangeGesture.expectedTime=expectedTime;
  assert.ok(result.homePlayer.seek.events.length>=2&&Math.abs(result.homePlayer.seek.time-expectedTime)<.3,'Native playback precisely follows the last actually delivered slider move');
  await tapControl('.home-playback [data-action=seek-relative][data-seconds="5"]');
@@ -442,9 +443,9 @@ try{
  if(paperDirectoryCount>1){assert.notEqual(circlePaper,selectionBefore.paper,'The right-hand selection test must genuinely choose a different suite');assert.equal(selectionBefore.pressed,false,'The suite was not selected before the native touch')}
  await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').scrollIntoView({block:'center'})`);
  result.paperSelectionTap=await tapControl(`[data-action=select-paper][data-paper="${circlePaper}"]`);
- assert.equal(await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').getAttribute('aria-pressed')`),'true','The right circular selection button updates the chosen paper');
+ assert.equal(await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').getAttribute('aria-pressed')`),'true','The paper title selection updates the chosen paper');
  const selectionAfter=await evaluate(`(()=>{var button=document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]');return {paper:JSON.parse(localStorage.getItem('listenly.state.v1')).selectedPaper,pressed:button.getAttribute('aria-pressed')==='true',inPlace:button===window.__paperSelectionButton&&button.closest('.paper-group-row')===window.__paperSelectionRow}})()`);
- assert.equal(selectionAfter.paper,circlePaper,'The native selection persists the newly chosen suite');assert.equal(selectionAfter.inPlace,true,'Selecting a different suite retains its row and indicator control for continuous animation');
+ assert.equal(selectionAfter.paper,circlePaper,'The native selection persists the newly chosen suite');assert.equal(selectionAfter.inPlace,true,'Selecting a different suite retains its row and title control for continuous animation');
  result.paperSelectorChange={before:selectionBefore.paper,after:selectionAfter.paper,pressedBefore:selectionBefore.pressed,pressedAfter:selectionAfter.pressed,inPlace:selectionAfter.inPlace};
  await tapControl('[data-action=nav][data-route=home]');
  await poll('document.querySelector(".focus-card")');

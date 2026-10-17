@@ -4,7 +4,7 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
 import {verifyReaderLayout,verifyCompactPlayerControls,verifyReaderScrollAndArticleMenu} from './reader-layout.test.mjs';
-import {enterLibraryPaper,openLibraryArticle} from './library-navigation.mjs';
+import {enterLibraryPaper,openLibraryArticle,clickAppControl} from './library-navigation.mjs';
 import {createHash} from 'node:crypto';
 
 let playwright;try{playwright=await import('playwright')}catch{playwright=await import(pathToFileURL(path.join(process.env.LOCALAPPDATA,'ms-playwright-go/1.57.0/package/index.mjs')).href)}
@@ -22,7 +22,7 @@ const webRoot=path.resolve(option('--web-root')||path.join(root,demo?'.build/dem
 const result={entrySha256:createHash('sha256').update(await readFile(path.join(webRoot,'app.compat.js'))).digest('hex'),pageErrors:errors,passed:false};
 const server=await startPreview(0,webRoot);
 const url=`http://127.0.0.1:${server.address().port}`;
-const click=async selector=>{await page.locator(selector).first().click();if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
+const click=selector=>clickAppControl(page,selector);
 async function openQuestion(index){const control=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await control.getAttribute('aria-expanded')!=='true')await control.click()}
 async function choose(index,option){await openQuestion(index);await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${option}"]`)}
 try{

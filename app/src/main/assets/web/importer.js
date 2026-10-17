@@ -50,17 +50,29 @@ function seconds(value) {
     + Number((match[4] || '').padEnd(3, '0')) / 1000;
 }
 
-export function parseSubtitle(text) {
+export function parseSubtitle(text, warnings = [], path = '') {
   const blocks = String(text).replace(/^\uFEFF/, '').replace(/\r/g, '').split(/\n\s*\n/);
   const rows = [];
   for (const block of blocks) {
     const lines = block.split('\n').filter(Boolean);
     const timeIndex = lines.findIndex(line => line.includes('-->'));
-    if (timeIndex < 0) continue;
+    if (timeIndex < 0) {
+      if (lines.length && !/^(WEBVTT|NOTE(?:\s|$)|STYLE(?:\s|$)|REGION(?:\s|$))/.test(lines[0])) {
+        warning(warnings, 'INVALID_TIMESTAMP', '字幕原文缺少有效起止时间。', path);
+      }
+      continue;
+    }
+    if (lines.filter(line => line.includes('-->')).length !== 1) {
+      warning(warnings, 'INVALID_TIMESTAMP', '字幕分句之间需空行分隔。', path);
+      continue;
+    }
     const times = lines[timeIndex].split('-->');
     const start = seconds(times[0].trim());
     const end = seconds(times[1].trim().split(/\s/)[0]);
-    if (start === null || end === null || end <= start) continue;
+    if (start === null || end === null || end <= start) {
+      warning(warnings, 'INVALID_TIMESTAMP', '字幕起止时间无效。', path);
+      continue;
+    }
     const body = lines.slice(timeIndex + 1).map(line => line.replace(/<[^>]*>/g, ''));
     const english = body.filter(line => !/[\u3400-\u9fff]/.test(line));
     const chinese = body.filter(line => /[\u3400-\u9fff]/.test(line));
@@ -69,14 +81,21 @@ export function parseSubtitle(text) {
   return rows.sort((a, b) => a.start - b.start);
 }
 
-export function parseLrc(text) {
+export function parseLrc(text, warnings = [], path = '') {
   const rows = [];
   for (const line of String(text).split(/\r?\n/)) {
     const matches = [...line.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g)];
     const body = line.replace(/\[[^\]]*\]/g, '').trim();
     if (!body) continue;
+    if (!matches.length) {
+      warning(warnings, 'INVALID_TIMESTAMP', 'LRC 原文缺少有效时间。', path);
+      continue;
+    }
     for (const match of matches) {
-      if (Number(match[2]) > 59) continue;
+      if (Number(match[2]) > 59) {
+        warning(warnings, 'INVALID_TIMESTAMP', 'LRC 秒数必须小于 60。', path);
+        continue;
+      }
       const start = Number(match[1]) * 60 + Number(match[2]) + Number((match[3] || '').padEnd(3, '0')) / 1000;
       rows.push({ start, en: /[\u3400-\u9fff]/.test(body) ? '' : body,
         zh: /[\u3400-\u9fff]/.test(body) ? body : '', timed: true });
@@ -99,15 +118,23 @@ function normalizeTranscript(value, warnings = [], path = '') {
       result.push({ start: 0, en: row, zh: '', timed: false });
       return;
     }
-    if (!row || typeof row !== 'object') return;
-    const en = String(row.en ?? row.text ?? row.english ?? '');
-    const zh = String(row.zh ?? row.translation ?? row.chinese ?? '');
-    if (!en && !zh) return;
+    if (!row || typeof row !== 'object') {
+      warning(warnings, 'INVALID_TRANSCRIPT', `第 ${index + 1} 句缺少原文和时间。`, path);
+      return;
+    }
+    const en = String(row.en ?? row.text ?? row.english ?? '').trim();
+    const zh = String(row.zh ?? row.translation ?? row.chinese ?? '').trim();
+    if (!en && !zh) {
+      warning(warnings, 'INVALID_TRANSCRIPT', `第 ${index + 1} 句没有原文。`, path);
+      return;
+    }
     const start = seconds(row.start ?? row.startTime);
     const end = seconds(row.end ?? row.endTime);
     const timed = row.timed !== false && start !== null;
-    if ((row.start !== undefined && start === null) || (end !== null && start !== null && end <= start)) {
-      warning(warnings, 'INVALID_TIMESTAMP', `第 ${index + 1} 句的时间无效，已作为无时间文本导入。`, path);
+    if (((row.start ?? row.startTime) !== undefined && start === null)
+      || ((row.end ?? row.endTime) !== undefined && end === null)
+      || (end !== null && start !== null && end <= start)) {
+      warning(warnings, 'INVALID_TIMESTAMP', `第 ${index + 1} 句的时间无效。`, path);
       result.push({ start: 0, en, zh, timed: false });
     } else {
       result.push({ start: start ?? 0, ...(end !== null ? { end } : {}), en, zh, timed });
@@ -115,6 +142,48 @@ function normalizeTranscript(value, warnings = [], path = '') {
   });
   if (result.every(row => row.timed)) result.sort((a, b) => a.start - b.start);
   return result;
+}
+
+/** Check authored sentence coordinates without inventing alignment for legacy text. */
+export function validateIntensiveTranscript(article, duration = article?.duration) {
+  const issues = [];
+  const rows = article?.transcript;
+  const label = short(article?.title || article?.id || '未命名文章');
+  const requireTimed = detail => warning(issues, 'TIMED_TRANSCRIPT_REQUIRED',
+    `「${label}」${detail}，请提供逐句 SRT／LRC 或带 start 的 JSON 原文。`);
+  if (!article?.audio?.intensive) {
+    warning(issues, 'INTENSIVE_AUDIO_REQUIRED', `「${label}」缺少可播放的精听音频。`);
+  }
+  const hasDuration = duration !== undefined && duration !== null;
+  const validDuration = typeof duration === 'number' && Number.isFinite(duration) && duration > 0;
+  if (hasDuration && !validDuration) {
+    warning(issues, 'INVALID_AUDIO_DURATION', `「${label}」音频时长必须大于 0。`);
+  }
+  if (!Array.isArray(rows) || !rows.length) {
+    requireTimed('缺少分句原文');
+    return issues;
+  }
+  for (const [index, row] of rows.entries()) {
+    if (!row || typeof row.en !== 'string' || !/[A-Za-z]/.test(row.en)) {
+      requireTimed(`第 ${index + 1} 句缺少英文`);
+      continue;
+    }
+    if (row.timed === false || typeof row.start !== 'number' || !Number.isFinite(row.start) || row.start < 0) {
+      requireTimed(`第 ${index + 1} 句没有有效时间`);
+      continue;
+    }
+    const next = rows[index + 1];
+    if (next && typeof next.start === 'number' && next.start <= row.start) {
+      requireTimed(`第 ${index + 1}、${index + 2} 句时间必须递增`);
+    }
+    if (row.end !== undefined && (typeof row.end !== 'number' || !Number.isFinite(row.end) || row.end <= row.start)) {
+      requireTimed(`第 ${index + 1} 句结束时间无效`);
+    }
+    if (validDuration && (row.start >= duration || (row.end !== undefined && row.end > duration + 0.05))) {
+      requireTimed(`第 ${index + 1} 句超出音频时长`);
+    }
+  }
+  return issues;
 }
 
 function plainRows(text) {
@@ -215,10 +284,26 @@ export function normalizePaper(paper, mode = 'intensive') {
   return { paper: { ...paper, id: paper.id, title: String(paper.title || paper.id), articles }, warnings };
 }
 
-export async function parseFolder(input) {
+export async function parseFolder(input, { restore = false } = {}) {
   const warnings = [];
   const mode = input?.mode === 'exam' ? 'exam' : 'intensive';
+  const strictIntensive = mode === 'intensive' && !restore;
   const files = new Map();
+  function finish(papers) {
+    const merged = mergePapers([], papers);
+    const notices = [...warnings, ...merged.warnings];
+    if (strictIntensive) {
+      const issues = merged.papers.flatMap(paper => paper.articles.flatMap(article => validateIntensiveTranscript(article)));
+      const malformed = notices.some(item => ['INVALID_TRANSCRIPT', 'INVALID_TIMESTAMP', 'INVALID_AUDIO_DURATION',
+        'INVALID_JSON', 'INVALID_PAPER', 'INVALID_ARTICLE_ID', 'ARTICLE_ID_COLLISION', 'PAPER_ID_COLLISION',
+        'TRANSCRIPT_CONFLICT', 'GROUP_ID_CONFLICT', 'READ_FAILED', 'TEXT_TOO_LARGE'].includes(item.code));
+      if (malformed || issues.length) {
+        warning(notices, 'TIMED_IMPORT_REJECTED', '本次精听材料未导入。每篇都需有效音频及逐句 SRT／LRC 或带时间戳的 JSON 原文；已有材料保留。');
+        return { papers: [], warnings: [...notices, ...issues], rejected: true };
+      }
+    }
+    return { papers: merged.papers, warnings: notices };
+  }
   if (!Array.isArray(input?.files)) return { papers: [], warnings: [{ code: 'NO_FILES', message: '未收到文件夹内容。' }] };
   if (input.files.length > 25000) return { papers: [], warnings: [{ code: 'TOO_MANY_FILES', message: '文件超过 25,000 个，请按年份分批导入。' }] };
   for (const file of input.files) {
@@ -280,7 +365,8 @@ export async function parseFolder(input) {
   function audioReference(reference, base, silent = false) {
     const path = resolve(reference, base, silent);
     if (!path) return undefined;
-    if (!AUDIO.test(path) || !files.get(path).url) {
+    if (!AUDIO.test(path) || !files.get(path).url
+      || (typeof files.get(path).size === 'number' && files.get(path).size <= 0)) {
       warning(warnings, 'INVALID_AUDIO', '音频格式不支持或没有可播放地址。', path);
       return undefined;
     }
@@ -297,7 +383,8 @@ export async function parseFolder(input) {
     if (/\.json$/i.test(path)) return normalizeTranscript(await readJSON(path), warnings, path);
     const text = await readText(path);
     if (text === null) return [];
-    return /\.(srt|vtt)$/i.test(path) ? parseSubtitle(text) : /\.lrc$/i.test(path) ? parseLrc(text) : plainRows(text);
+    return /\.(srt|vtt)$/i.test(path) ? parseSubtitle(text, warnings, path)
+      : /\.lrc$/i.test(path) ? parseLrc(text, warnings, path) : plainRows(text);
   }
   async function extraText(value, base, fallbackDir, names) {
     if (typeof value === 'string') {
@@ -344,7 +431,7 @@ export async function parseFolder(input) {
     }
     if (!audio[mode] && metadata.audio === undefined) {
       const first = [...files.keys()].filter(path => dir(path) === articleDir && AUDIO.test(path)).sort()[0];
-      if (first && files.get(first).url) audio[mode] = files.get(first).url;
+      if (first) audio[mode] = audioReference(basename(first), dir(first));
     }
     Object.keys(audio).forEach(key => { if (!audio[key]) delete audio[key]; });
     let transcript = await transcriptReference(metadata.transcript, base, articleDir);
@@ -353,12 +440,16 @@ export async function parseFolder(input) {
     const translation = await extraText(metadata.translation, base, articleDir, ['translation.txt', '译文.txt']);
     transcript = combineTranslation(transcript, translation, warnings, articleDir);
     const questions = await questionReference(metadata.questions, base, articleDir);
+    const duration = seconds(metadata.duration);
+    if (metadata.duration !== undefined && (duration === null || duration <= 0)) {
+      warning(warnings, 'INVALID_AUDIO_DURATION', `「${short(metadata.title || metadata.id)}」音频时长必须大于 0。`, manifestPath);
+    }
     return {
       id: metadata.id, title: String(metadata.title || metadata.id),
       ...(metadata.type ? { type: String(metadata.type) } : {}), audio, transcript, questions,
       ...(text ? { text } : {}), ...(translation ? { translation } : {}),
       ...(metadata.source ? { source: metadata.source } : {}),
-      ...(metadata.duration && seconds(metadata.duration) !== null ? { duration: seconds(metadata.duration) } : {}),
+      ...(duration !== null ? { duration } : {}),
     };
   }
   function resolveDirectory(reference, base) {
@@ -397,8 +488,7 @@ export async function parseFolder(input) {
   }
   // A malformed explicit manifest is not silently reinterpreted as an unrelated import.
   if (manifests.length) {
-    const merged = mergePapers([], papers);
-    return { papers: merged.papers, warnings: [...warnings, ...merged.warnings] };
+    return finish(papers);
   }
   const groups = new Map();
   for (const path of files.keys()) {
@@ -429,22 +519,26 @@ export async function parseFolder(input) {
       || slug(parts.length >= 2 ? parts[1] : parts[0] || basename(audioPaths[0] || 'article').replace(AUDIO, ''));
     const audio = {};
     const isQuestionFolder = parts.length >= 3 || (!!questionData?.groupId && !!questionData?.options);
-    if (audioPaths[0] && !isQuestionFolder) audio[mode] = files.get(audioPaths[0]).url;
+    if (audioPaths[0] && !isQuestionFolder) audio[mode] = audioReference(basename(audioPaths[0]), folder);
     let transcript = await transcriptReference(metadata?.transcript, folder, folder);
     const translation = await extraText(metadata?.translation, folder, folder, ['translation.txt', '译文.txt']);
     transcript = combineTranslation(transcript, translation, warnings, folder);
     const questions = normalizeQuestions(questionData || [], warnings, questionPath || '', reference => audioReference(reference, folder));
     if (isQuestionFolder && audioPaths[0]) questions.forEach(question => { if (!question.audioUrl) question.audioUrl = files.get(audioPaths[0]).url; });
+    const duration = seconds(metadata?.duration);
+    if (metadata?.duration !== undefined && (duration === null || duration <= 0)) {
+      warning(warnings, 'INVALID_AUDIO_DURATION', `「${short(metadata?.title || articleId)}」音频时长必须大于 0。`, metadataPath);
+    }
     papers.push({ id: paperId, title: String(metadata?.paperTitle || paperId), articles: [{
       id: articleId, title: String(metadata?.title || articleId), audio, transcript, questions,
+      ...(duration !== null ? { duration } : {}),
       ...(translation ? { translation } : {}),
     }] });
     if (audioPaths.length > 1) warning(warnings, 'MULTIPLE_AUDIO', '子文件夹有多个音频，默认使用按文件名排序的第一个；建议添加 paper.json。', folder);
   }
   if (papers.length) warning(warnings, 'INFERRED_IDS', '已根据目录名建立对应关系；两个模式请保持相同的试卷名和文章名，或添加 paper.json。');
   else warning(warnings, 'NO_MATERIALS', '未发现可用音频或题目。请检查目录结构和 paper.json。');
-  const merged = mergePapers([], papers);
-  return { papers: merged.papers, warnings: [...warnings, ...merged.warnings] };
+  return finish(papers);
 }
 
 function contentMismatch(left, right) {
@@ -503,6 +597,10 @@ export function mergePapers(existing = [], incoming = []) {
         continue;
       } else if (newArticle.transcript?.length) {
         if (!article.transcript.length) article.transcript = [...newArticle.transcript];
+        else if (validateIntensiveTranscript(newArticle).length === 0
+          && validateIntensiveTranscript(article).length > 0) {
+          article.transcript = newArticle.transcript.map((row, index) => ({ ...row, zh: row.zh || article.transcript[index]?.zh || '' }));
+        }
         else article.transcript = article.transcript.map((row, index) => ({ ...row, zh: row.zh || newArticle.transcript[index]?.zh || '' }));
       }
       article.audio = { ...article.audio, ...Object.fromEntries(Object.entries(newArticle.audio || {}).filter(([, value]) => value)) };

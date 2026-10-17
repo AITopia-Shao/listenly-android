@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {openLibraryArticle} from './library-navigation.mjs';
+import {openLibraryArticle,navigateToLibrary} from './library-navigation.mjs';
 import {writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
@@ -133,10 +133,10 @@ export async function verifyCompactPlayerControls(page){
 export async function verifyReaderScrollAndArticleMenu(page){
  // Article selection belongs to home/library rather than the reading title.
  assert.equal(await page.locator('[data-action="article-list"]').count(),0,'reader has no article-selection action');
- await page.locator('[data-action="nav"][data-route="library"]').click();
+ await navigateToLibrary(page);
  await openLibraryArticle(page,'listenly-original','library');
  assert.match(await page.locator('.practice-title').innerText(),/little library/);
- await page.locator('[data-action="nav"][data-route="library"]').click();
+ await navigateToLibrary(page);
  await openLibraryArticle(page,'listenly-original','morning');
  assert.match(await page.locator('.practice-title').innerText(),/A small change/);
 
@@ -149,7 +149,7 @@ export async function verifyReaderScrollAndArticleMenu(page){
   {path:'paper-layout-scroll/long/transcript.json',text:JSON.stringify(transcript)},
   {path:'paper-layout-scroll/long/questions.json',text:JSON.stringify(questions)}
  ]}})),{transcript,questions});
- await page.locator('[data-action="nav"][data-route="library"]').click();
+ await navigateToLibrary(page);
  await openLibraryArticle(page,'paper-layout-scroll','long');
  await page.locator('[data-action="mode"][data-mode="intensive"]').click();
  await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();
@@ -223,7 +223,7 @@ export async function verifyReaderScrollAndArticleMenu(page){
  assert.equal(await page.locator('.quiz-question').count(),2,'submitting keeps the complete article answer sheet on screen');
  await page.locator('[data-action="view-result"]').click();
  assert.match(await page.locator('.result-card').innerText(),/本篇完成\s+2\s*\/\s*2/,'results include every question submitted together');
- await page.locator('[data-action="nav"][data-route="library"]').click();
+ await navigateToLibrary(page);
  await openLibraryArticle(page,'listenly-original','morning');
  await page.locator('[data-action="mode"][data-mode="intensive"]').click();
  await page.locator('.display-controls [data-action="display"][data-display="bilingual"]').click();

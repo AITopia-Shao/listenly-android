@@ -13,7 +13,7 @@ import struct
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-WEB_MODULES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js")
+WEB_MODULES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg")
 COMPAT_MODULES = ("app.compat.js", "compat-polyfills.js")
 FONT_FILES = ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md")
 
@@ -33,6 +33,7 @@ def prepare(output: Path) -> None:
     web = output / "assets" / "web"
     web.mkdir(parents=True)
     for filename in WEB_MODULES:
+        (web / filename).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / "assets" / "web" / filename, web / filename)
     (web / 'fonts').mkdir()
     for filename in FONT_FILES:

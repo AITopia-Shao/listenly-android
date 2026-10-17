@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
-import {openLibraryArticle} from './library-navigation.mjs';
+import {openLibraryArticle,clickAppControl} from './library-navigation.mjs';
 import {installReplayEndIsolation,replayIsolationDescription} from './replay-isolation.mjs';
 
 let playwright;
@@ -26,7 +26,7 @@ const page=await context.newPage(),additionalPages=[];
 function observe(p,label){p.on('pageerror',error=>result.pageErrors.push({page:label,message:error.message}));p.on('response',response=>{if(/\.(wav|mp3|m4a)(?:[?#]|$)/i.test(response.url()))result.mediaRequests.push({page:label,url:response.url(),status:response.status()})})}
 observe(page,'main');
 const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
-const click=async selector=>{await page.locator(selector).first().click();if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
+const click=selector=>clickAppControl(page,selector);
 const homeRow=article=>`.home-paper-row [data-action="home-play"][data-paper="${demo.id}"][data-article="${article}"]`;
 const saved=p=>p.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));
 const audio=p=>p.locator('#audio').evaluate(a=>({src:a.currentSrc,attributeSrc:a.getAttribute('src'),time:a.currentTime,pendingTime:a.dataset.pendingTime===undefined?null:Number(a.dataset.pendingTime),duration:Number.isFinite(a.duration)?a.duration:null,paused:a.paused,ended:a.ended,seeking:a.seeking,ready:a.readyState,rate:a.playbackRate,error:a.error?{code:a.error.code,message:a.error.message}:null}));

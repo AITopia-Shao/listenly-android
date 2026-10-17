@@ -2,7 +2,7 @@
 // kept outside the DOM so replacing a reader panel does not reset its lens.
 const SEGMENTS='.theme-control,.mode-control,.display-controls';
 const PRESSES='button,[role="button"],summary,a[href],[data-action]';
-const STATIC_LENSES='.transport-pill,.speed-btn,.big-play,.row-play,.speed-popover,.dialog,.paper-group-row.is-selected,.home-paper-row.is-selected,.option.selected,.filter-option[aria-checked="true"],.speed-option[aria-checked="true"]';
+const STATIC_LENSES='.transport-pill,.speed-btn,.big-play,.row-play,.glass-symbol,.speed-popover,.dialog';
 const SVG='http://www.w3.org/2000/svg';
 const groups=new Map(),presses=new Map(),pointers=new Map(),filters=new Map();
 let observer=null,mountedRoot=null,scheduled=0,motionFrame=0,motionTime=0,optics=null,defs=null,filterNumber=0,reduced=null;
@@ -12,6 +12,13 @@ export function advanceSpring(position,velocity,target,elapsed,stiffness=460,dam
   const duration=Math.min(.064,Math.max(0,elapsed)),steps=Math.max(1,Math.ceil(duration*120)),dt=duration/steps;
   for(let i=0;i<steps;i++){velocity+=((target-position)*stiffness-velocity*damping)*dt;position+=velocity*dt}
   return {position,velocity};
+}
+
+// A small delayed strain lets the surface trail its motion instead of changing
+// from rigid to stretched in a single frame. It also releases softly at rest.
+export function advanceViscousStrain(position,velocity,motionVelocity,elapsed){
+  const target=Math.max(-1,Math.min(1,motionVelocity/1050));
+  return advanceSpring(position,velocity,target,elapsed,210,25);
 }
 
 function isReduced(){return !!(reduced&&reduced.matches)}
@@ -54,14 +61,15 @@ export function ensureLens(element,radius){
 }
 
 function createGroup(key){
-  return {key,element:null,lens:null,buttons:[],centers:[],x:0,velocity:0,target:0,width:0,barWidth:0,height:0,top:0,active:-1,moving:false,initialized:false,detachedAt:0};
+  return {key,element:null,lens:null,buttons:[],centers:[],x:0,velocity:0,strain:0,strainVelocity:0,target:0,width:0,barWidth:0,height:0,top:0,active:-1,moving:false,initialized:false,detachedAt:0};
 }
 function groupKey(element){return element.classList.contains('theme-control')?'theme':element.classList.contains('mode-control')?'mode':'display'}
 function paintGroup(group){
   if(!group.lens||!group.element.isConnected)return;
-  const energy=Math.min(1,Math.abs(group.velocity)/1050),stretch=1+energy*.18,squash=1-energy*.12,lean=Math.max(-2,Math.min(2,group.velocity/650)),extent=(group.width*stretch+group.height*Math.abs(Math.tan(lean*Math.PI/180)))/2,center=Math.max(extent+1,Math.min(group.barWidth-extent-1,group.x));
+  const energy=Math.min(1,Math.abs(group.strain)),stretch=1+energy*.18,squash=1-energy*.12,lean=group.strain*1.6,extent=(group.width*stretch+group.height*Math.abs(Math.tan(lean*Math.PI/180)))/2,center=Math.max(extent+1,Math.min(group.barWidth-extent-1,group.x));
   group.lens.style.transform=`translate3d(${center-group.width/2}px,0,0) scale(${stretch},${squash}) skewX(${lean}deg)`;
   group.element.style.setProperty('--segment-velocity',String(energy));
+  group.buttons.forEach((button,index)=>{const emphasis=Math.pow(Math.max(0,1-Math.abs(center-group.centers[index])/Math.max(1,group.width*.8)),2);button.style.setProperty('--lens-emphasis',String(emphasis));button.style.setProperty('--lens-scale',String(1+emphasis*.045));button.style.setProperty('--lens-weight',String(400+emphasis*200));button.style.setProperty('--lens-contrast',String(emphasis))});
 }
 function pressKey(element){
   if(element.id)return `id:${element.id}`;
@@ -83,8 +91,8 @@ function syncGroup(group,element){
   group.target=group.centers[index];
   if(changed&&oldWidth>0&&wasPresent){group.x*=group.barWidth/oldWidth;group.velocity*=group.barWidth/oldWidth}
   const recentlyDetached=group.detachedAt&&performance.now()-group.detachedAt<180;
-  if(!group.initialized||isReduced()||(changed&&!wasPresent&&!recentlyDetached)){group.x=group.target;group.velocity=0;group.moving=false}
-  else group.moving=Math.abs(group.x-group.target)>.08||Math.abs(group.velocity)>1;
+  if(!group.initialized||isReduced()||(changed&&!wasPresent&&!recentlyDetached)){group.x=group.target;group.velocity=group.strain=group.strainVelocity=0;group.moving=false}
+  else group.moving=Math.abs(group.x-group.target)>.08||Math.abs(group.velocity)>1||Math.abs(group.strain)>.001||Math.abs(group.strainVelocity)>.01;
   group.active=index;group.initialized=true;group.detachedAt=0;paintGroup(group);if(group.moving)requestMotion();
 }
 
@@ -103,7 +111,8 @@ function tick(time){
   groups.forEach(group=>{
     if(!group.element||!group.element.isConnected){if(!group.detachedAt)group.detachedAt=performance.now();group.moving=false;return}
     if(!group.moving)return;const next=advanceSpring(group.x,group.velocity,group.target,elapsed);group.x=next.position;group.velocity=next.velocity;
-    if(isReduced()||(Math.abs(group.target-group.x)<.08&&Math.abs(group.velocity)<1)){group.x=group.target;group.velocity=0;group.moving=false}paintGroup(group);moving=moving||group.moving;
+    const strain=advanceViscousStrain(group.strain,group.strainVelocity,group.velocity,elapsed);group.strain=strain.position;group.strainVelocity=strain.velocity;
+    if(isReduced()||(Math.abs(group.target-group.x)<.08&&Math.abs(group.velocity)<1&&Math.abs(group.strain)<.001&&Math.abs(group.strainVelocity)<.01)){group.x=group.target;group.velocity=group.strain=group.strainVelocity=0;group.moving=false}paintGroup(group);moving=moving||group.moving;
   });
   presses.forEach((state,element)=>{
     if(!element.isConnected){presses.delete(element);return}if(!state.moving)return;

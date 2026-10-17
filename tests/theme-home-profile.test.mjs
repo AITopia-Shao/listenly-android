@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
-import {enterLibraryPaper,openLibraryArticle} from './library-navigation.mjs';
+import {enterLibraryPaper,openLibraryArticle,clickAppControl} from './library-navigation.mjs';
 
 // Exercise the rendered app with genuine pointer gestures and decoded audio.
 let playwright;
@@ -29,7 +29,7 @@ const legacyArticleKey=JSON.stringify(['retired-paper','past-article']);
 const seed={theme:'light',mode:'exam',display:'bilingual',activityVersion:2,days:{[dateKeys.previous]:3600,[dateKeys.today]:180},completedListeningDays:{[dateKeys.today]:180},studyDays:{[dateKeys.previous]:3420},dailyQuestions:{[dateKeys.previous]:{[legacyKey]:1},[dateKeys.today]:{[legacyKey]:3}},dailyArticles:{[dateKeys.previous]:{[legacyArticleKey]:2},[dateKeys.today]:{[legacyArticleKey]:1}},answers:{[legacyKey]:{choice:'A',submitted:true,at:Date.now()-86400000}},activity:{[JSON.stringify(['listenly-original','morning'])]:{last:Date.now(),seconds:600}}};
 await page.addInitScript(seed=>{if(!localStorage.getItem('listenly.state.v1'))localStorage.setItem('listenly.state.v1',JSON.stringify(seed))},seed);
 const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
-const click=async selector=>{await page.locator(selector).first().click();if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
+const click=selector=>clickAppControl(page,selector);
 const saved=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));
 const audioState=()=>page.locator('#audio').evaluate(a=>({time:a.currentTime,src:a.currentSrc,paused:a.paused,error:a.error?{code:a.error.code,message:a.error.message}:null}));
 async function watchActualPlayback(){await page.locator('#audio').evaluate(audio=>{window.__actualPlayback=null;audio.addEventListener('playing',()=>{window.__actualPlayback={src:audio.currentSrc,time:audio.currentTime}},{once:true})})}
@@ -119,7 +119,7 @@ try{
  pass('offline Inter typography loads and is shared by interface and playback controls',fontState);
  await checkOutsideReader('home');
  assert.equal(await page.locator('.section-header [data-action="nav"]').count(),0,'home has no redundant all-materials entry');
- assert.doesNotMatch(await page.locator('.section-header').innerText(),/全部/);
+ assert.equal(await page.locator('.section-header').count(),0,'home removes the redundant article count header');
  const homePlay=page.locator('.focus-card [data-action="home-play"]');
  assert.equal(await homePlay.count(),1,'home has its own audio button');
  assert.equal(await homePlay.locator('[data-action="open"]').count(),0,'the home audio button is independent of article entry');
@@ -166,7 +166,7 @@ try{
  await setTheme('light');
  const lightHome=await page.evaluate(()=>({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color}));
  assert.ok(rgb(lightHome.background).every(n=>n>235),'light theme uses a neutral white background');
- for(const value of Object.values(lightHome)){const color=rgb(value);assert.ok(Math.max(...color)-Math.min(...color)<=1,'daytime foundation uses grayscale')}
+ const dayInk=rgb(lightHome.color);assert.ok(dayInk.every(channel=>channel<75)&&Math.max(...dayInk)-Math.min(...dayInk)<40,'daytime text keeps a dark neutral ink over the wallpaper')
  await page.reload();await page.locator('.focus-card').waitFor();assert.equal(await page.locator('html').getAttribute('data-theme'),'light','day theme persists on reload');
  await page.screenshot({path:path.join(output,'home-light.png'),fullPage:true});
  pass('both themes persist on reload and use the requested palettes',{lightHome});
@@ -314,22 +314,21 @@ try{
  assert.equal(await page.locator('.paper-group-row').count(),1,'year selection filters paper directories');
  assert.equal(await page.locator('[data-action="open-paper"][data-paper="experience-selection"]').count(),1,'year selection retains the matching imported paper');
  const selectedControl=page.locator('[data-action="select-paper"][data-paper="experience-selection"]');
- await selectedControl.evaluate(button=>{window.__selectionControl=button;window.__selectionRow=button.closest('.paper-group-row');window.__selectionGlyph=button.querySelector('.selection-indicator svg');window.__selectionMotion=[];for(const type of ['animationstart','transitionrun'])window.__selectionRow.addEventListener(type,event=>window.__selectionMotion.push({type,animation:event.animationName,property:event.propertyName,tag:event.target.tagName,pseudo:event.pseudoElement}))});
- await selectedControl.click();assert.equal(await selectedControl.getAttribute('aria-pressed'),'true','paper selection updates its check indicator');
- assert.ok(await selectedControl.evaluate(button=>window.__selectionControl===button&&window.__selectionRow===button.closest('.paper-group-row')&&window.__selectionGlyph===button.querySelector('.selection-indicator svg')),'selecting a suite preserves the row and indicator nodes for a continuous state transition');
+ await selectedControl.evaluate(button=>{window.__selectionControl=button;window.__selectionRow=button.closest('.paper-group-row');window.__selectionLens=document.querySelector('[data-flow-list="library"] .flow-lens');window.__selectionMotion=[];window.__selectionSampling=true;const sample=()=>{if(!window.__selectionSampling)return;const lens=document.querySelector('[data-flow-list="library"] .flow-lens'),r=lens?.getBoundingClientRect();if(r)window.__selectionMotion.push({time:performance.now(),left:r.left,top:r.top,width:r.width,height:r.height});requestAnimationFrame(sample)};sample()});
+ await selectedControl.click();assert.equal(await selectedControl.getAttribute('aria-pressed'),'true','the suite title selects the paper immediately');
+ assert.ok(await selectedControl.evaluate(button=>window.__selectionControl===button&&window.__selectionRow===button.closest('.paper-group-row')&&window.__selectionLens===document.querySelector('[data-flow-list="library"] .flow-lens')),'selecting a suite preserves the row, title control and shared moving lens');
+ assert.equal(await page.locator('.selection-indicator,.paper-select svg rect').count(),0,'selection is expressed by the moving lens without a duplicate checkbox');
  const selectedStyle=await selectedControl.evaluate(b=>({background:getComputedStyle(b).backgroundColor,outline:getComputedStyle(b).outlineStyle,shadow:getComputedStyle(b).boxShadow}));
- assert.equal(selectedStyle.background,'rgba(0, 0, 0, 0)','the selection glyph has no colored rectangle');assert.equal(selectedStyle.outline,'none');assert.equal(selectedStyle.shadow,'none');
- await page.waitForFunction(()=>Number(getComputedStyle(document.querySelector('.paper-group-row.is-selected'),'::before').opacity)===1);
- const selectionMotion=await selectedControl.evaluate(()=>window.__selectionMotion);
- assert.ok(selectionMotion.some(event=>event.type==='transitionrun'&&event.property==='opacity'),'selecting a paper fades its optical selection layer on the retained row');
- assert.ok(selectionMotion.some(event=>event.type==='transitionrun'&&event.tag==='path'&&['opacity','transform'].includes(event.property)),'the check mark animates into place on its retained SVG path');
- const nightGlass=await page.locator('.paper-group-row.is-selected').evaluate(e=>({background:getComputedStyle(e,'::before').backgroundColor,opacity:Number(getComputedStyle(e,'::before').opacity),image:getComputedStyle(e,'::before').backgroundImage}));
- const nightGlassColor=rgb([...nightGlass.image.matchAll(/rgba?\([^)]*\)/g)].at(-1)[0]);assert.ok(nightGlassColor[0]>nightGlassColor[1]&&nightGlassColor[1]>nightGlassColor[2],'night suite selection uses an orange tinted glass layer');assert.match(nightGlass.image,/gradient/,'selected suite retains the material highlight');
+ assert.equal(selectedStyle.outline,'none','pointer selection adds no outer focus rectangle');
+ await page.waitForFunction(()=>{const row=document.querySelector('.paper-group-row.is-selected'),lens=document.querySelector('[data-flow-list="library"] .flow-lens');if(!row||!lens)return false;const a=row.getBoundingClientRect(),b=lens.getBoundingClientRect();return Math.abs((a.top+a.bottom-b.top-b.bottom)/2)<1&&Number(getComputedStyle(lens).opacity)>.98});
+ const selectionMotion=await selectedControl.evaluate(()=>{window.__selectionSampling=false;return window.__selectionMotion});
+ const nightGlass=await page.locator('[data-flow-list="library"] .flow-lens').evaluate(e=>({opacity:Number(getComputedStyle(e).opacity),image:getComputedStyle(e).backgroundImage,filter:getComputedStyle(e).backdropFilter||getComputedStyle(e).webkitBackdropFilter}));
+ assert.match(nightGlass.filter,/url\(/,'selected paper uses actual optical refraction');assert.match(nightGlass.image,/gradient/,'selected suite retains the glass material highlight');
  const selectedTitle=page.locator('.paper-group-row.is-selected .paper-group-copy h3');
  const nightSelection=rgb(await selectedTitle.evaluate(e=>getComputedStyle(e).color));assert.ok(nightSelection[0]>nightSelection[1]&&nightSelection[1]>nightSelection[2],'night mode identifies the selected suite with orange');
  await setTheme('light','library');
- await page.waitForFunction(()=>{const row=document.querySelector('.paper-group-row.is-selected'),css=getComputedStyle(row,'::before'),values=[...css.backgroundImage.matchAll(/rgba?\([^)]*\)/g)].at(-1)[0].match(/[\d.]+/g).slice(0,3).map(Number);return Number(css.opacity)===1&&Math.max(...values)-Math.min(...values)<=1&&values[0]<245});
- const daySelection=rgb(await page.locator('.paper-group-row.is-selected').evaluate(e=>[...getComputedStyle(e,'::before').backgroundImage.matchAll(/rgba?\([^)]*\)/g)].at(-1)[0]));assert.ok(Math.max(...daySelection)-Math.min(...daySelection)<=1&&daySelection[0]<245,'day mode shades the selected suite with a neutral gray glass layer');
+ await page.waitForFunction(()=>document.querySelector('[data-flow-list="library"] .flow-lens')&&Number(getComputedStyle(document.querySelector('[data-flow-list="library"] .flow-lens')).opacity)>.98);
+ const daySelection=await page.locator('[data-flow-list="library"] .flow-lens').evaluate(e=>({image:getComputedStyle(e).backgroundImage,filter:getComputedStyle(e).backdropFilter||getComputedStyle(e).webkitBackdropFilter}));assert.match(daySelection.filter,/url\(/,'day mode retains the selected suite refraction layer');
  await page.screenshot({path:path.join(output,'library-papers-light.png'),fullPage:true});
  await setTheme('dark','library');
  await page.waitForTimeout(180);await page.screenshot({path:path.join(output,'library-papers-dark.png'),fullPage:true});
@@ -417,7 +416,7 @@ try{
  pass('paper and article previews and failed playback preserve home across reload; actual library/reader playback or the right-hand selector changes the home collection',{rejectedMediaReads});
  assert.deepEqual(result.pageErrors,[]);result.passed=true;
  console.log(JSON.stringify({passed:true,checks:result.checks.length,entrySha256:result.entrySha256,output}));
-}catch(error){result.failure={message:error.message,stack:error.stack};await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}
+}catch(error){result.failure={message:error.message,stack:error.stack};result.failureFlow=await page.locator('[data-flow-list]').evaluateAll(elements=>elements.map(element=>{const r=element.getBoundingClientRect(),lens=element.querySelector('.flow-lens'),b=lens?.getBoundingClientRect(),s=lens?getComputedStyle(lens):null;return {key:element.dataset.flowList,top:r.top,height:r.height,lens:b?{top:b.top,height:b.height,width:b.width,opacity:s.opacity,transform:s.transform}:null,selected:[...element.querySelectorAll('[data-flow-item].is-selected,[data-flow-item].active')].map(item=>{const a=item.getBoundingClientRect();return {key:item.dataset.flowKey,top:a.top,height:a.height}})}})).catch(()=>[]);await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}
 finally{await writeFile(path.join(output,'result.json'),JSON.stringify(result,null,2));await browser.close();await new Promise(resolve=>server.close(resolve))}
 
-function rgb(color){const values=color.match(/[\d.]+/g);assert.ok(values&&values.length>=3,`computed RGB color: ${color}`);return values.slice(0,3).map(Number)}
+function rgb(color){const values=color.match(/[\d.]+/g);assert.ok(values&&values.length>=3,`computed RGB color: ${color}`);return values.slice(0,3).map(value=>Number(value)*(color.startsWith('color(srgb')?255:1))}

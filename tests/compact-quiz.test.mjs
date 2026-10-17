@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
-import {openLibraryArticle} from './library-navigation.mjs';
+import {openLibraryArticle,clickAppControl} from './library-navigation.mjs';
 
 let playwright;try{playwright=await import('playwright')}catch{playwright=await import(pathToFileURL(path.join(process.env.LOCALAPPDATA,'ms-playwright-go/1.57.0/package/index.mjs')).href)}
 const args=process.argv.slice(2),root=process.cwd();
@@ -42,7 +42,7 @@ async function makeFixture(){
  }
  await writeFile(path.join(fixturePaper,'paper.json'),JSON.stringify({id:paperId,title:'原创整篇做题验证',year:2002,articles}));
 }
-const click=async selector=>{await page.locator(selector).first().click();if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
+const click=selector=>clickAppControl(page,selector);
 const saved=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));
 const answerKey=(article,index)=>JSON.stringify([paperId,article,`q${index+1}`]);
 const materialKey=article=>JSON.stringify([paperId,article]);

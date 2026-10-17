@@ -137,6 +137,20 @@ if ($Lite) {
     [IO.File]::WriteAllText((Join-Path $taskBuild 'main\assets\web\bundled-library.json'),
         ($taskBundle | ConvertTo-Json -Depth 100 -Compress), (New-Object Text.UTF8Encoding($false)))
 }
+# The two user-supplied wallpapers remain in a local build cache. Public demo
+# assets always retain the original vector backgrounds shipped in the repo.
+$taskWallpaperCache = Join-Path $taskRoot '.build\personal-wallpapers'
+if (!$Demo -and (Test-Path -LiteralPath (Join-Path $taskWallpaperCache 'sources.json'))) {
+    $taskWallpaperSources = Get-Content -LiteralPath (Join-Path $taskWallpaperCache 'sources.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($taskImageName in @('day.png','night.png')) {
+        $taskImageFile = Join-Path $taskWallpaperCache $taskImageName
+        $taskImageRecord = @($taskWallpaperSources.files | Where-Object { $_.name -eq $taskImageName })
+        if ($taskImageRecord.Count -ne 1 -or (Get-FileHash -LiteralPath $taskImageFile -Algorithm SHA256).Hash.ToLowerInvariant() -ne $taskImageRecord[0].sha256) { throw 'Personal wallpaper does not match its reviewed source hash' }
+        Copy-Item -LiteralPath $taskImageFile -Destination (Join-Path $taskBuild ('main\assets\web\wallpapers\'+$taskImageName))
+    }
+    [IO.File]::WriteAllText((Join-Path $taskBuild 'main\assets\web\wallpapers.json'),
+        '{"profile":"personal-tahoe","day":"wallpapers/day.png","night":"wallpapers/night.png"}', (New-Object Text.UTF8Encoding($false)))
+}
 # The portable build compiles against the newest installed Android stubs. The code
 # gates modern APIs at runtime; target SDK stays 37. Android Studio compiles at 37.
 Write-Host "Compiling with $($taskPlatform.Name), targeting API 37; tools $($taskTools.Name)"

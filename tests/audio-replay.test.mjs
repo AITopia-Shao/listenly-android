@@ -4,7 +4,7 @@ import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
-import {openLibraryArticle} from './library-navigation.mjs';
+import {openLibraryArticle,clickAppControl} from './library-navigation.mjs';
 import {installReplayEndIsolation,replayIsolationDescription} from './replay-isolation.mjs';
 
 // All playback uses the actual app buttons and a real browser media pipeline.
@@ -52,7 +52,7 @@ await page.addInitScript(()=>{
 });
 const server=await startPreview(0,webRoot);
 const base=`http://127.0.0.1:${server.address().port}`;
-const click=selector=>page.locator(selector).first().click();
+const click=selector=>clickAppControl(page,selector);
 async function activateQuestion(index){const toggle=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await toggle.getAttribute('aria-expanded')==='true')await toggle.click();await toggle.click()}
 const snapshot=()=>page.locator('#audio').evaluate(audio=>({src:audio.getAttribute('src'),currentSrc:audio.currentSrc,time:audio.currentTime,duration:audio.duration,readyState:audio.readyState,networkState:audio.networkState,seeking:audio.seeking,paused:audio.paused,ended:audio.ended,error:audio.error?{code:audio.error.code,message:audio.error.message}:null}));
 async function record(label){const state=await snapshot();assert.equal(state.error,null,label);result.checks.push({label,state});return state}

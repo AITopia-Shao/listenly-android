@@ -11,6 +11,9 @@ on:
       - app/src/main/assets/web/*.html
       - app/src/main/assets/web/*.css
       - app/src/main/assets/web/fonts/**
+      - app/src/main/assets/web/icons/**
+      - app/src/main/assets/web/wallpapers/**
+      - app/src/main/assets/web/wallpapers.json
       - app/build.gradle
       - tools/android-smoke.mjs
       - tools/android-replay-smoke.mjs
@@ -22,6 +25,9 @@ on:
       - tests/nav-lens.test.mjs
       - tests/home-player.test.mjs
       - tests/glass-controls.test.mjs
+      - tests/glass-motion.test.mjs
+      - tests/wallpaper-flow.test.mjs
+      - tests/import-media-browser.test.mjs
       - tests/playback-modes.test.mjs
       - tests/playback-modes-browser.test.mjs
       - tests/replay-isolation.mjs
@@ -53,6 +59,9 @@ on:
       - app/src/main/assets/web/*.html
       - app/src/main/assets/web/*.css
       - app/src/main/assets/web/fonts/**
+      - app/src/main/assets/web/icons/**
+      - app/src/main/assets/web/wallpapers/**
+      - app/src/main/assets/web/wallpapers.json
       - app/build.gradle
       - tools/android-smoke.mjs
       - tools/android-replay-smoke.mjs
@@ -64,6 +73,9 @@ on:
       - tests/nav-lens.test.mjs
       - tests/home-player.test.mjs
       - tests/glass-controls.test.mjs
+      - tests/glass-motion.test.mjs
+      - tests/wallpaper-flow.test.mjs
+      - tests/import-media-browser.test.mjs
       - tests/playback-modes.test.mjs
       - tests/playback-modes-browser.test.mjs
       - tests/replay-isolation.mjs
@@ -137,6 +149,8 @@ jobs:
           npm run test:home
           npm run test:glass
           npm run test:playback
+          npm run test:wallpaper
+          npm run test:import-media
       - name: Save the original demo test APK and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -158,6 +172,8 @@ jobs:
             .build/home-player/
             .build/glass-system/browser/
             .build/playback-modes/
+            .build/tahoe/wallpaper-flow/
+            .build/import-media-browser/
           include-hidden-files: true
           retention-days: 14
 

@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
-import {openLibraryArticle} from './library-navigation.mjs';
+import {openLibraryArticle,clickAppControl} from './library-navigation.mjs';
 
 let playwright;try{playwright=await import('playwright')}catch{playwright=await import(pathToFileURL(path.join(process.env.LOCALAPPDATA,'ms-playwright-go/1.57.0/package/index.mjs')).href)}
 const args=process.argv.slice(2),option=name=>{const i=args.indexOf(name);return i<0?null:args[i+1]};
@@ -18,7 +18,7 @@ page.on('console',message=>{if(message.type()==='error')result.consoleErrors.pus
 await page.addInitScript(()=>{window.__modeEvents=[];window.__modeSeekEvents=[];for(const name of ['pointerdown','pointerup','pointercancel','input'])document.addEventListener(name,event=>{if(event.target?.id==='seek')window.__modeSeekEvents.push({name,trusted:event.isTrusted,value:Number(event.target.value),at:performance.now()})},true);document.addEventListener('DOMContentLoaded',()=>{const audio=document.querySelector('#audio');for(const name of ['ended','playing','error'])audio.addEventListener(name,event=>{const saved=JSON.parse(localStorage.getItem('listenly.state.v1')||'{}');window.__modeEvents.push({name,at:performance.now(),time:audio.currentTime,duration:audio.duration,src:audio.currentSrc,trusted:event.isTrusted,active:saved.active,mode:saved.mode,playbackMode:saved.playbackMode})},true)})});
 const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
 const paper='playback-original',fixture=path.join(output,'fixture',paper);
-const click=selector=>page.locator(selector).first().click();
+const click=selector=>clickAppControl(page,selector);
 const state=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));
 const listening=s=>Object.values(s.completedListeningDays||{}).reduce((n,value)=>n+value,0);
 const endedCount=()=>page.evaluate(()=>window.__modeEvents.filter(event=>event.name==='ended').length);
@@ -33,7 +33,7 @@ async function makeFixture(){
  for(const [file,start,end] of [['a.wav',0,3],['b.wav',3,6.4],['q1.wav',0,.8],['q2.wav',1,1.9]])await writeFile(path.join(fixture,file),cutWave(original,start,end));
  const options=['A','B','C','D'].map(id=>({id,text:`Original choice ${id}`}));
  await writeFile(path.join(fixture,'questions.json'),JSON.stringify([{id:'q1',number:1,options,answer:'A',audio:'q1.wav',start:0,end:.8},{id:'q2',number:2,options,answer:'B',audio:'q2.wav',start:1,end:1.9}]));
- await writeFile(path.join(fixture,'paper.json'),JSON.stringify({id:paper,title:'原创播放方式验证',year:2003,articles:[{id:'a',title:'第1篇',duration:3,audio:{intensive:'a.wav',exam:'a.wav'},transcript:[{start:0,en:'An original first passage.'}],questions:'questions.json'},{id:'text',title:'文字材料',transcript:[{start:0,en:'A passage without a recording.'}],questions:[]},{id:'b',title:'第2篇',duration:3.4,audio:{intensive:'b.wav',exam:'b.wav'},transcript:[{start:0,en:'An original second passage.'}],questions:[]}]}));
+ await writeFile(path.join(fixture,'paper.json'),JSON.stringify({id:paper,title:'原创播放方式验证',year:2003,articles:[{id:'a',title:'第1篇',duration:3,audio:{intensive:'a.wav',exam:'a.wav'},transcript:[{start:0,en:'An original first passage.'}],questions:'questions.json'},{id:'b',title:'第2篇',duration:3.4,audio:{intensive:'b.wav',exam:'b.wav'},transcript:[{start:0,en:'An original second passage.'}],questions:[]}]}));
 }
 async function metadata(){await page.waitForFunction(()=>{const a=document.querySelector('#audio');return a.readyState>=1&&Number.isFinite(a.duration)&&a.duration>0&&!a.seeking})}
 async function pause(){if(!(await audio()).paused){await click('.big-play');await page.waitForFunction(()=>document.querySelector('#audio').paused)}}
@@ -51,13 +51,18 @@ async function holdNearEnding(){
  return {before,geometry,travel,y,events,heldAudio:await audio(),heldState:await state()};
 }
 try{
- await makeFixture();await page.goto(url);await page.locator('.home-playback').waitFor();await click('[data-action="nav"][data-route="library"]');await page.locator('#folder-input').setInputFiles(fixture);await page.locator(`[data-action="select-paper"][data-paper="${paper}"]`).waitFor();if(await page.locator('.dialog-shade:not(.is-closing)').count())await click('[data-action="close-dialog"]');await click(`[data-action="select-paper"][data-paper="${paper}"]`);await click('[data-action="nav"][data-route="home"]');
+ await makeFixture();await page.goto(url);await page.locator('.home-playback').waitFor();await click('[data-action="nav"][data-route="library"]');
+ // Newly imported intensive folders must now contain playable, timed articles.
+ // Unit coverage separately retains skip behavior for legacy text-only rows.
+ const invalid=path.join(output,'invalid-intensive');await mkdir(invalid,{recursive:true});await writeFile(path.join(invalid,'paper.json'),JSON.stringify({id:'invalid-playback-text',title:'无音频的导入验证',articles:[{id:'text',title:'文字材料',transcript:[{start:0,en:'A passage without a recording.'}],questions:[]}]}));
+ const beforeRejected=await state();await page.locator('#folder-input').setInputFiles(invalid);await page.waitForFunction(()=>document.querySelector('#toast').classList.contains('visible')&&/音频|精听/.test(document.querySelector('#toast').textContent));assert.equal(await page.locator('[data-action="select-paper"][data-paper="invalid-playback-text"]').count(),0);assert.deepEqual((await state()).lastImport,beforeRejected.lastImport,'a rejected intensive folder does not modify the prior successful import record');assert.deepEqual((await state()).homeFocus,beforeRejected.homeFocus,'a rejected import cannot replace the pinned article');pass('intensive folder validation rejects a text-only article without persisting a paper or success record');
+ await page.locator('#folder-input').setInputFiles(fixture);await page.locator(`[data-action="select-paper"][data-paper="${paper}"]`).waitFor();if(await page.locator('.dialog-shade:not(.is-closing)').count())await click('[data-action="close-dialog"]');await click(`[data-action="select-paper"][data-paper="${paper}"]`);await click('[data-action="nav"][data-route="home"]');
  assert.equal(await page.locator('[data-action="playback-mode"]').count(),1);assert.equal(await page.locator('[data-action="playback-mode"]').getAttribute('aria-label'),'顺序播放');assert.equal(await page.locator('[data-action="loop"]').count(),0);assert.equal(await page.locator('.player-buttons button').count(),5);
  await page.evaluate(()=>{window.__modeRows=[...document.querySelectorAll('.home-paper-row')];window.__modeOrder=window.__modeRows.map(row=>row.querySelector('[data-action="open"]').dataset.article)});
  pass('home exposes one symmetric five-control player and defaults to sequential playback');
 
- let before=await endedCount();await play();let saved=await waitQueue(before,'b');assert.equal(saved.homeFocus.article,'b');assert.ok(listening(saved)>2.9,'only a full natural playback credits listening');assert.deepEqual(saved.answers,{});assert.equal(await page.locator('.home-playback').getAttribute('data-article'),'b');assert.ok(await page.evaluate(()=>window.__modeRows.every((row,i)=>row===document.querySelectorAll('.home-paper-row')[i])),'queue promotion retains all original row DOM nodes');assert.deepEqual(await page.locator('.home-paper-row [data-action="open"]').evaluateAll(rows=>rows.map(row=>row.dataset.article)),['a','text','b']);
- pass('natural sequential end skips text-only material, promotes the next article and preserves the home list',{listeningSeconds:listening(saved)});
+ let before=await endedCount();await play();let saved=await waitQueue(before,'b');assert.equal(saved.homeFocus.article,'b');assert.ok(listening(saved)>2.9,'only a full natural playback credits listening');assert.deepEqual(saved.answers,{});assert.equal(await page.locator('.home-playback').getAttribute('data-article'),'b');assert.ok(await page.evaluate(()=>window.__modeRows.every((row,i)=>row===document.querySelectorAll('.home-paper-row')[i])),'queue promotion retains all original row DOM nodes');assert.deepEqual(await page.locator('.home-paper-row [data-action="open"]').evaluateAll(rows=>rows.map(row=>row.dataset.article)),['a','b']);
+ pass('natural sequential end promotes the next playable article and preserves the complete home list',{listeningSeconds:listening(saved)});
 
  before=await endedCount();await startAtZero();saved=await waitQueue(before,'a');assert.ok(listening(saved)>6.2);assert.equal(saved.active.paper,paper);pass('the end of a paper wraps to its first recording without crossing papers',{listeningSeconds:listening(saved)});
 

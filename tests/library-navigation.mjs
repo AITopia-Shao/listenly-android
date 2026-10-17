@@ -1,5 +1,5 @@
 // Entering a paper/article previews it. Selection remains a separate right-hand
-// circle action, while playback has its own material-play control.
+// explicit selection action, while playback has its own material-play control.
 export async function enterLibraryPaper(page,paper){
  const group=page.locator(`[data-action="open-paper"][data-paper="${paper}"]`);
  if(await group.count()){await group.first().click();return}
@@ -16,3 +16,16 @@ export async function openLibraryArticle(page,paper,article){
  const selector=`[data-action="open"][data-paper="${paper}"]${article?`[data-article="${article}"]`:''}`;
  await page.locator(selector).first().click();
 }
+
+// Follow the same two gestures a person uses after the reader header was
+// simplified: return home, then use the persistent navigation destination.
+export async function clickAppControl(page,selector){
+ if(/data-action=["\']nav["\']/.test(selector)&&/data-route=["\'](?:library|profile)["\']/.test(selector)&&!await page.locator(selector).count()){
+  await page.locator('[data-action="nav"][data-route="home"]').first().click();
+  await page.locator('.focus-card').waitFor();
+ }
+ await page.locator(selector).first().click();
+ if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
+}
+
+export const navigateToLibrary=page=>clickAppControl(page,'[data-action="nav"][data-route="library"]');
