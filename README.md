@@ -14,6 +14,12 @@
 
 首页与正文都支持顺序播放、单篇循环和随机播放。首页列表保留原位，当前文章与资料库套卷使用相同的选中材质。按住进度条时不会被自然结束的自动切篇打断，做题音频结束保留当前题目。[组件与验证说明](docs/glass-system.md)。
 
+已通过 [Android 8／11／16 与浏览器云端验证](https://github.com/AITopia-Shao/listenly-android/actions/runs/38992549160)，并在本地 Android 16 中完成真实触控、折射截图和保留历史记录检查。[1.0.11 安装包](https://github.com/AITopia-Shao/listenly-android/releases/tag/v1.0.11)仅含原创示例；realme GT7 本轮尚无真机复测结果。
+
+| 首页播放器 | 正文与切换 | 导入弹窗 |
+| --- | --- | --- |
+| ![首页播放器](docs/screenshots/glass-home.png) | ![正文与切换](docs/screenshots/glass-reader.png) | ![导入弹窗](docs/screenshots/glass-import.png) |
+
 ## 1.0.10 的首页播放器与导航透镜
 
 底部导航使用连续移动的折射透镜，速度驱动横向拉伸、纵向压缩和回弹。快速反向选择会承接当前运动；重复点击当前项保持静止，减少动画时直接对齐。页面内容、焦点和导航状态同步更新，正文仍保留紧凑的音频底栏。
