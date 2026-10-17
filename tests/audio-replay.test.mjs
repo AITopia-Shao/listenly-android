@@ -5,6 +5,7 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
 import {openLibraryArticle} from './library-navigation.mjs';
+import {installReplayEndIsolation,replayIsolationDescription} from './replay-isolation.mjs';
 
 // All playback uses the actual app buttons and a real browser media pipeline.
 // Seeking to a recording's final second shortens the test without faking ended.
@@ -22,6 +23,8 @@ const result={webRoot,entrySha256:createHash('sha256').update(entry).digest('hex
 let documentIndex=1;
 const browser=await playwright.chromium.launch({...(process.env.LISTENLY_BROWSER_CHANNEL?{channel:process.env.LISTENLY_BROWSER_CHANNEL}:(process.platform==='win32'?{channel:'msedge'}:{})),headless:true});
 const page=await browser.newPage({viewport:{width:412,height:915},deviceScaleFactor:1});
+result.queueIsolation=replayIsolationDescription;
+await page.addInitScript(installReplayEndIsolation);
 page.on('pageerror',error=>result.pageErrors.push(error.message));
 page.on('requestfailed',request=>result.requestFailures.push({url:request.url(),failure:request.failure()?.errorText}));
 page.on('response',response=>{if(/\.(wav|m4a|mp3)(?:[?#]|$)/i.test(response.url()))result.mediaRequests.push({url:response.url(),status:response.status(),requestRange:response.request().headers().range||null,contentRange:response.headers()['content-range']||null})});
@@ -202,9 +205,10 @@ try{
   await click('[data-action="nav"][data-route="home"]');await open('listenly-original','morning');await play('WAV return from home');await pause();
   await click('[data-action="display"][data-display="bilingual"]');
   await click('.sentence[data-index="1"]');await page.waitForFunction(()=>!document.querySelector('#audio').paused);await record('sentence selection starts actual playback');
-  await click('[data-action="loop"]');await page.locator('#audio').evaluate(a=>a.currentTime=11.19);
-  await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&!a.seeking&&a.currentTime>=5.329&&a.currentTime<7},{},{timeout:15000});
-  await record('sentence loop crosses boundary and returns');await click('[data-action="loop"]');await pause();await play('ordinary play after sentence loop');await pause();
+  assert.equal(await page.locator('[data-action="loop"]').count(),0,'the obsolete sentence-loop button is removed');
+  await page.locator('#audio').evaluate(a=>a.currentTime=11.19);
+  await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&!a.seeking&&a.currentTime>11.5},{},{timeout:15000});
+  await record('sentence selection continues through the next sentence without the obsolete loop');await pause();await play('ordinary play after sentence selection');await pause();
   await click('[data-action="mode"][data-mode="exam"]');await metadata();await play('WAV switch to exam');await pause();await click('[data-action="mode"][data-mode="intensive"]');await metadata();await play('WAV return from exam');await pause();
   const fixture=await createImportedFixture();await click('[data-action="nav"][data-route="library"]');await page.locator('#folder-input').setInputFiles(fixture);
   await page.locator('[data-action="open-paper"][data-paper="replay-import"]').waitFor();
@@ -240,6 +244,7 @@ try{
   result.passed=true;console.log(JSON.stringify({passed:true,checks:result.checks.length,entrySha256:result.entrySha256,output}));
 }catch(error){result.failure={message:error.message,stack:error.stack};result.finalState=await snapshot().catch(()=>null);await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}
 finally{
+  result.isolatedReplayEnds=await page.evaluate(()=>window.__isolatedReplayEnds||[]).catch(()=>[]);
   result.mediaEvents.push(...await page.evaluate(index=>(window.replayMediaEvents||[]).map(event=>({...event,document:index})),documentIndex).catch(()=>[]));
   result.actionTrace.push(...await page.evaluate(index=>(window.replayActionTrace||[]).map(event=>({...event,document:index})),documentIndex).catch(()=>[]));
   await writeFile(path.join(output,'result.json'),JSON.stringify(result,null,2));

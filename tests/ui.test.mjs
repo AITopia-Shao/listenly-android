@@ -5,20 +5,24 @@ import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
 import {verifyReaderLayout,verifyCompactPlayerControls,verifyReaderScrollAndArticleMenu} from './reader-layout.test.mjs';
 import {enterLibraryPaper,openLibraryArticle} from './library-navigation.mjs';
+import {createHash} from 'node:crypto';
 
 let playwright;try{playwright=await import('playwright')}catch{playwright=await import(pathToFileURL(path.join(process.env.LOCALAPPDATA,'ms-playwright-go/1.57.0/package/index.mjs')).href)}
 const {chromium}=playwright;
 
 const root=process.cwd();
-await mkdir(path.join(root,'dist'),{recursive:true});
+const args=process.argv.slice(2),option=name=>{const i=args.indexOf(name);return i<0?null:args[i+1]};
+const output=path.resolve(option('--output')||path.join(root,'dist'));
+await mkdir(output,{recursive:true});
 const browser=await chromium.launch({...(process.env.LISTENLY_BROWSER_CHANNEL?{channel:process.env.LISTENLY_BROWSER_CHANNEL}:(process.platform==='win32'?{channel:'msedge'}:{})),headless:true});
 const page=await browser.newPage({viewport:{width:430,height:932},deviceScaleFactor:1});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 const demo=process.argv.includes('--demo');
-const webRoot=path.join(root,demo?'.build/demo/main/assets/web':'app/src/main/assets/web');
+const webRoot=path.resolve(option('--web-root')||path.join(root,demo?'.build/demo/main/assets/web':'app/src/main/assets/web'));
+const result={entrySha256:createHash('sha256').update(await readFile(path.join(webRoot,'app.compat.js'))).digest('hex'),pageErrors:errors,passed:false};
 const server=await startPreview(0,webRoot);
 const url=`http://127.0.0.1:${server.address().port}`;
-const click=selector=>page.locator(selector).first().click();
+const click=async selector=>{await page.locator(selector).first().click();if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
 async function openQuestion(index){const control=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await control.getAttribute('aria-expanded')!=='true')await control.click()}
 async function choose(index,option){await openQuestion(index);await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${option}"]`)}
 try{
@@ -26,14 +30,14 @@ try{
  assert.equal(await page.locator('[data-action="theme"],[data-action="import"]').count(),0,'home keeps global appearance and import actions on profile');
  assert.doesNotMatch(await page.locator('#app').innerText(),/每一句，都听懂|放慢一点，让英语慢慢清晰|每份材料，都是下一次进步的开始/,'home removes decorative slogans');
  assert.equal(await page.locator('.brand').count(),0,'home has no oversized brand header');
- await page.screenshot({path:path.join(root,'dist/home-phone.png'),fullPage:true});
+ await page.screenshot({path:path.join(output,'home-phone.png'),fullPage:true});
  // Open the original sample rather than depending on the bundled-paper order.
  await click('[data-action="nav"][data-route="library"]');
  assert.equal(await page.locator('[data-action="theme"],[data-action="import"]').count(),0,'library keeps global appearance and import actions on profile');
  assert.doesNotMatch(await page.locator('#app').innerText(),/听力资料库|每份材料，都是下一次进步的开始/,'library removes redundant headings');
  await openLibraryArticle(page,'listenly-original','morning');
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
- await verifyReaderLayout(page,path.join(root,'dist'));
+ result.layouts=await verifyReaderLayout(page,output);
  await verifyCompactPlayerControls(page);
  await verifyReaderScrollAndArticleMenu(page);
  assert.equal(await page.locator('.sentence .zh').count(),6);
@@ -49,11 +53,11 @@ try{
  assert.equal(await page.locator('.quiz-question').count(),3,'one article displays all three question rows');
  await choose(0,'B');await choose(1,'D');await choose(2,'C');await click('[data-action="submit-article"]');
  await openQuestion(0);assert.match(await page.locator('.quiz-question[data-question-index="0"] .question-feedback').innerText(),/答对了/);
- await page.screenshot({path:path.join(root,'dist/quiz-phone.png'),fullPage:true});
+ await page.screenshot({path:path.join(output,'quiz-phone.png'),fullPage:true});
  await click('[data-action="mode"][data-mode="intensive"]');
  assert.match(await page.locator('.practice-title').innerText(),/A small change/);
  await click('[data-action="bookmark"]');
- await page.screenshot({path:path.join(root,'dist/intensive-phone.png'),fullPage:true});
+ await page.screenshot({path:path.join(output,'intensive-phone.png'),fullPage:true});
  await page.reload();await page.locator('.focus-card').waitFor();
  await click('[data-action="nav"][data-route="library"]');
  await openLibraryArticle(page,'listenly-original','morning');
@@ -110,7 +114,9 @@ try{
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no horizontal overflow');
  }
  await page.setViewportSize({width:1280,height:900});await click('[data-action="nav"][data-route="home"]');
- await page.screenshot({path:path.join(root,'dist/home-desktop.png'),fullPage:true});
+ await page.screenshot({path:path.join(output,'home-desktop.png'),fullPage:true});
  assert.deepEqual(errors,[]);
- console.log('PASS: compact reader on 3 phone sizes with/without safe areas, one bottom player, seek/skip/speed/sentence loop, article menu, reading/quiz scroll preservation, bilingual/original/hidden, mode alignment, grading, persistence, real folder import, merged materials, 4 viewport widths.');
-}finally{await browser.close();server.close()}
+ result.passed=true;
+ console.log('PASS: compact reader on 3 phone sizes with/without safe areas, one bottom player, seek/skip/speed/three playback modes, no reader article picker, reading/quiz scroll preservation, bilingual/original/hidden, mode alignment, grading, persistence, real folder import, merged materials, 4 viewport widths.');
+}catch(error){result.failure={message:error.message,stack:error.stack};await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}
+finally{await writeFile(path.join(output,'ui-result.json'),JSON.stringify(result,null,2));await browser.close();server.close()}

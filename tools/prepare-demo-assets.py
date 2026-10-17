@@ -14,7 +14,7 @@ import shutil
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-WEB_FILES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js")
+WEB_FILES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js")
 OPTIONAL_WEB_FILES = ("app.compat.js", "compat-polyfills.js")
 FONT_FILES = ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md")
 

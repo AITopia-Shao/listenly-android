@@ -1,6 +1,6 @@
 {
   "name": "listenly-android",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,7 +13,7 @@
     "prepare:demo": "npm run build:web && python tools/prepare-demo-assets.py",
     "start": "node tools/preview.mjs",
     "start:demo": "node tools/preview.mjs --demo",
-    "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs tests/activity.test.mjs",
+    "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs tests/activity.test.mjs tests/playback-modes.test.mjs tests/glass-motion.test.mjs",
     "test:demo": "python -m unittest discover -s tests -p test_demo_assets.py",
     "test:ui": "node tests/ui.test.mjs --demo",
     "test:replay": "node tests/audio-replay.test.mjs --demo",
@@ -21,7 +21,9 @@
     "test:experience": "node tests/theme-home-profile.test.mjs --demo",
     "test:lens": "node tests/nav-lens.test.mjs --demo",
     "test:home": "node tests/home-player.test.mjs --demo",
-    "test:quiz": "node tests/compact-quiz.test.mjs --demo"
+    "test:quiz": "node tests/compact-quiz.test.mjs --demo",
+    "test:glass": "node tests/glass-controls.test.mjs --demo",
+    "test:playback": "node tests/playback-modes-browser.test.mjs --demo"
   },
   "devDependencies": {
     "@babel/core": "7.29.7",

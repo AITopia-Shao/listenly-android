@@ -5,6 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {installReplayEndIsolation,replayIsolationDescription} from '../tests/replay-isolation.mjs';
 
 const [serial,apk,label='audio-replay',...flags]=process.argv.slice(2);
 const demo=flags.includes('--demo'),fixture=flags.includes('--fixture');
@@ -19,6 +20,7 @@ const run=(args,binary=false)=>execFileSync(adb,['-s',serial,...args],{encoding:
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const getJSON=url=>new Promise((resolve,reject)=>http.get(url,res=>{let body='';res.on('data',v=>body+=v);res.on('end',()=>{try{resolve(JSON.parse(body))}catch(error){reject(error)}})}).on('error',reject));
 const result={serial,apk:path.resolve(apk),label,checkedAt:new Date().toISOString(),scenarios:[],network:[],console:[]};
+result.queueIsolation=replayIsolationDescription;
 result.apkSha256=createHash('sha256').update(await readFile(apk)).digest('hex');
 result.harnessSha256Normalized=createHash('sha256').update((await readFile(new URL(import.meta.url),'utf8')).replace(/\r\n/g,'\n')).digest('hex');
 let socket,forwarded=false,evaluate,rpc;
@@ -36,7 +38,7 @@ async function playAndProgress(){const before=await snapshot();await tap('[data-
 const closeDialog='(()=>{var shade=document.querySelector(".dialog-shade");if(shade)shade.remove()})()';
 const importsExpr='window.Android&&window.Android.getImports?JSON.parse(window.Android.getImports()).map(x=>({mode:x.mode,name:x.name,fileCount:x.files?x.files.length:0})):[]';
 async function scenario(name,fn){const item={name};result.scenarios.push(item);try{await evaluate(closeDialog);item.before=await snapshot();const details=await fn(item);if(details!==undefined)item.details=details;item.after=await snapshot();item.status='passed'}catch(error){item.status='failed';item.error=String(error.stack||error);if(error.playback)item.failedPlayback=error.playback;try{item.after=await snapshot();await writeFile(path.join(root,`${name}.png`),run(['exec-out','screencap','-p'],true))}catch{}}await writeFile(path.join(root,'result.json'),JSON.stringify(result,null,2));console.log(`${name}: ${item.status}`)}
-async function openArticle(id){await evaluate(`document.querySelector('[data-action=article-list]').click()`);await poll('document.querySelector(".article-list")');await evaluate(`document.querySelector(${JSON.stringify(`[data-action=open][data-paper=${paperId}][data-article=${id}]`)}).click()`);await evaluate(closeDialog);await poll('document.querySelector("#audio").readyState>=1');return snapshot()}
+async function openArticle(id){await evaluate(`(()=>{if(!document.querySelector('[data-action=nav][data-route=library]'))document.querySelector('[data-action=nav][data-route=home]').click();document.querySelector('[data-action=nav][data-route=library]').click();var group=document.querySelector(${JSON.stringify(`[data-action=open-paper][data-paper=${paperId}]`)});if(!group){var back=document.querySelector('[data-action=library-back]');if(back)back.click();group=document.querySelector(${JSON.stringify(`[data-action=open-paper][data-paper=${paperId}]`)})}if(group)group.click();document.querySelector(${JSON.stringify(`[data-action=open][data-paper=${paperId}][data-article=${id}]`)}).click()})()`);await evaluate(closeDialog);await poll('document.querySelector("#audio").readyState>=1');return snapshot()}
 async function recoverSystemUi(stage){
  let xml;
  for(let attempt=0;attempt<3;attempt++){
@@ -70,6 +72,7 @@ try{
  result.importsBefore=await evaluate(importsExpr);
  await evaluate(`document.querySelector('[data-action=nav][data-route=library]').click();document.querySelector('[data-action=open-paper][data-paper=${paperId}]').click();document.querySelector('[data-action=open][data-paper=${paperId}][data-article=${firstArticle}]').click()`);
  await poll('document.querySelector("#audio").readyState>=1');
+ await evaluate(`(${installReplayEndIsolation.toString()})()`);
  await evaluate(`(()=>{window.__audioEvents=[];var a=document.querySelector('#audio');for(var name of ['loadstart','loadedmetadata','canplay','playing','play','pause','ended','seeking','seeked','stalled','waiting','error','emptied','abort'])a.addEventListener(name,e=>window.__audioEvents.push({type:e.type,at:Date.now(),time:a.currentTime,paused:a.paused,ended:a.ended,ready:a.readyState,network:a.networkState,error:a.error?{code:a.error.code,message:a.error.message}:null}));a.pause();a.currentTime=0})()`);
  result.initial=await snapshot();assert.ok(result.initial.duration>10,'Audio metadata has a valid duration');
  // Compare native WebView responses to original APK bytes, independent of decoder behaviour.
@@ -144,8 +147,8 @@ try{
   return {questionCount:article.questions.length,nextIndex,independentDropdowns:independentDropdowns||{status:'not-applicable',reason:'This fixture has only one question'},expandedBeforeCollapse:expanded,collapseStates,first,before,selected,after,clipPlayback,geometry,returned};
  });
  // The original demo has timestamps, unlike the real untimed CET article used above.
- if(!fixture)await scenario('timed-sentence-loop',async()=>{await evaluate('window.listenlyBack();document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original]").click();document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click()');await poll('document.querySelector("#audio").readyState>=1');await tap('[data-action=display][data-display=bilingual]');await pause();await evaluate('document.querySelector("#audio").currentTime=0');await tap('[data-action=sentence][data-index="0"]');await poll('!document.querySelector("#audio").paused');await tap('[data-action=loop]');const next=await evaluate('Number(document.querySelector(\'.sentence[data-index="1"] .timestamp\').textContent.split(":").reduce((v,n)=>v*60+Number(n),0))');await evaluate(`document.querySelector('#audio').currentTime=${next-.3}`);await poll(`document.querySelector('#audio').currentTime<${next-1}`);const looped=await snapshot();assert.equal(looped.error,null);assert.equal(looped.paused,false);await tap('[data-action=loop]');await pause();return {boundary:next,looped}});
- result.events=await evaluate('window.__audioEvents');result.savedStateAfter=await evaluate('localStorage.getItem("listenly.state.v1")');
+ if(!fixture)await scenario('timed-sentence-continuation',async()=>{await evaluate('window.listenlyBack();document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original]").click();document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click()');await poll('document.querySelector("#audio").readyState>=1');await tap('[data-action=display][data-display=bilingual]');await pause();await evaluate('document.querySelector("#audio").currentTime=0');await tap('[data-action=sentence][data-index="0"]');await poll('!document.querySelector("#audio").paused');assert.equal(await evaluate('document.querySelectorAll("[data-action=loop]").length'),0,'The obsolete sentence-loop control is absent');const next=await evaluate('Number(document.querySelector(\'.sentence[data-index="1"] .timestamp\').textContent.split(":").reduce((v,n)=>v*60+Number(n),0))');await evaluate(`document.querySelector('#audio').currentTime=${next-.3}`);await poll(`document.querySelector('#audio').currentTime>${next+.2}`);const continued=await snapshot();assert.equal(continued.error,null);assert.equal(continued.paused,false);await pause();return {boundary:next,continued}});
+ result.events=await evaluate('window.__audioEvents');result.isolatedReplayEnds=await evaluate('window.__isolatedReplayEnds||[]');result.savedStateAfter=await evaluate('localStorage.getItem("listenly.state.v1")');
  result.importsAfter=await evaluate(importsExpr);
  assert.deepEqual(JSON.parse(result.savedStateAfter||'{}').answers||{},JSON.parse(result.savedStateBefore||'{}').answers||{},'Existing answer records survive repeated playback');
  assert.deepEqual(result.importsAfter,result.importsBefore,'Existing imported folders survive repeated playback');

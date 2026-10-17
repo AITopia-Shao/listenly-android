@@ -29,10 +29,12 @@ const legacyArticleKey=JSON.stringify(['retired-paper','past-article']);
 const seed={theme:'light',mode:'exam',display:'bilingual',activityVersion:2,days:{[dateKeys.previous]:3600,[dateKeys.today]:180},completedListeningDays:{[dateKeys.today]:180},studyDays:{[dateKeys.previous]:3420},dailyQuestions:{[dateKeys.previous]:{[legacyKey]:1},[dateKeys.today]:{[legacyKey]:3}},dailyArticles:{[dateKeys.previous]:{[legacyArticleKey]:2},[dateKeys.today]:{[legacyArticleKey]:1}},answers:{[legacyKey]:{choice:'A',submitted:true,at:Date.now()-86400000}},activity:{[JSON.stringify(['listenly-original','morning'])]:{last:Date.now(),seconds:600}}};
 await page.addInitScript(seed=>{if(!localStorage.getItem('listenly.state.v1'))localStorage.setItem('listenly.state.v1',JSON.stringify(seed))},seed);
 const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
-const click=selector=>page.locator(selector).first().click();
+const click=async selector=>{await page.locator(selector).first().click();if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
 const saved=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));
 const audioState=()=>page.locator('#audio').evaluate(a=>({time:a.currentTime,src:a.currentSrc,paused:a.paused,error:a.error?{code:a.error.code,message:a.error.message}:null}));
 async function watchActualPlayback(){await page.locator('#audio').evaluate(audio=>{window.__actualPlayback=null;audio.addEventListener('playing',()=>{window.__actualPlayback={src:audio.currentSrc,time:audio.currentTime}},{once:true})})}
+async function watchProductionEnd(){return page.locator('#audio').evaluate(audio=>{window.__productionEnds??=[];const before=window.__productionEnds.length;audio.addEventListener('ended',event=>window.__productionEnds.push({src:audio.currentSrc,time:audio.currentTime,duration:audio.duration,trusted:event.isTrusted}),{once:true,capture:true});return before})}
+async function waitProductionEnd(before){await page.waitForFunction(before=>(window.__productionEnds||[]).length>before,before);await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.readyState>=1&&a.currentTime>.05});await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').paused);return page.evaluate(()=>window.__productionEnds.at(-1))}
 async function waitForActualPlayback(suffix){await page.waitForFunction(suffix=>{const a=document.querySelector('#audio'),played=window.__actualPlayback;return played&&played.src.endsWith(suffix)&&!a.paused&&!a.error&&a.currentSrc===played.src&&a.currentTime>played.time+.1},suffix)}
 function pass(label,details){result.checks.push({label,...(details?{details}:{})})}
 async function checkOutsideReader(route){
@@ -43,7 +45,7 @@ async function checkOutsideReader(route){
  assert.equal(await page.locator('.bottom-nav').count(),1,`${route} has bottom navigation`);
  pass(`${route}: training controls are absent and global settings only appear on profile`);
 }
-async function setTheme(theme,returnRoute='home'){await click('[data-action="nav"][data-route="profile"]');await click(`[data-action="theme"][data-theme="${theme}"]`);if(returnRoute!=='profile')await click(`[data-action="nav"][data-route="${returnRoute}"]`)}
+async function setTheme(theme,returnRoute='home'){await click('[data-action="nav"][data-route="profile"]');await click(`[data-action="theme"][data-theme="${theme}"]`);await page.waitForTimeout(600);if(returnRoute!=='profile')await click(`[data-action="nav"][data-route="${returnRoute}"]`)}
 async function checkDefaultReader(){
  assert.equal(await page.locator('[data-mode="intensive"][aria-pressed="true"]').count(),1,'entering reader defaults to intensive');
  assert.equal(await page.locator('[data-display="hidden"][aria-pressed="true"]').count(),1,'entering reader defaults to hidden text');
@@ -69,7 +71,7 @@ async function speedMenu(buttonSelector='[data-action="speed"]'){
  return menu;
 }
 async function chooseSpeed(value){
- await page.locator(`.speed-popover [data-action="set-speed"][data-speed="${value}"]`).click();
+ await page.locator(`.speed-popover [data-action="set-speed"][data-speed="${value}"]`).click();await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing'));
  assert.equal(await page.locator('.speed-popover').count(),0,'a speed choice dismisses the menu');
  assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),value,'the audio applies the chosen rate');
  assert.equal((await saved()).speed,value,'the chosen rate is persisted');
@@ -130,6 +132,7 @@ try{
  const profileAudio=await audioState();
  await page.evaluate(()=>window.__profileIdentity=document.querySelector('.profile-page')||document.querySelector('.statistics'));
  await click('[data-action="theme"][data-theme="dark"]');
+ await page.waitForTimeout(600);
  assert.ok(await page.evaluate(()=>window.__profileIdentity===(document.querySelector('.profile-page')||document.querySelector('.statistics'))),'appearance changes keep the existing settings page and interaction targets');
  assert.equal((await audioState()).src,profileAudio.src,'profile appearance selection preserves the loaded recording');
  assert.ok(Math.abs((await audioState()).time-profileAudio.time)<.05,'profile appearance selection preserves the paused recording position');
@@ -170,10 +173,10 @@ try{
  await click('.focus-open[data-action="open"]');await checkDefaultReader();
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
  const speedBefore=await page.locator('#audio').evaluate(a=>a.playbackRate);
- await speedMenu();await page.keyboard.press('Escape');
+ await speedMenu();await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
  assert.equal(await page.locator('.speed-popover').count(),0,'Escape dismisses the speed menu');
  assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),speedBefore,'cancelling speed selection keeps the rate');
- await speedMenu();await page.locator('.speed-shade').click({position:{x:4,y:4}});
+ await speedMenu();await page.locator('.speed-shade').click({position:{x:4,y:4}});await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing'));
  assert.equal(await page.locator('.speed-popover').count(),0,'tapping outside dismisses speed selection');
  assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),speedBefore,'outside dismissal keeps the applied playback rate');
  await page.evaluate(()=>{window.__speedAudio=document.querySelector('#audio');window.__speedReader=document.querySelector('.main-panel')});
@@ -187,12 +190,12 @@ try{
   const bounds=await page.locator('.speed-popover').boundingBox();
   assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=viewport.width&&bounds.y+bounds.height<=viewport.height,'anchored speed menu stays inside the phone viewport');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'speed menu creates no horizontal page overflow');
-  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
  }
  await page.setViewportSize({width:393,height:873});
  await page.emulateMedia({reducedMotion:'reduce'});await speedMenu();
  assert.equal(await page.locator('.speed-popover').evaluate(e=>e.getAnimations({subtree:true}).length),0,'reduced motion disables popup animation');
- await page.keyboard.press('Escape');await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));await page.emulateMedia({reducedMotion:'no-preference'});
  pass('explicit speed selection preserves playback, cancellation, reading position and phone layout',{speedBefore,chosenRate:1.25});
  const before=await bookmarkStyle();assert.equal(before.pressed,'false');assert.equal(before.fill,'none');
  await click('[data-action="bookmark"]');await page.waitForTimeout(220);
@@ -208,28 +211,25 @@ try{
  assert.equal(await page.locator('.mode-control').evaluate(e=>getComputedStyle(e,'::before').animationName),'none','reduced motion also disables the mode indicator animation');
  await page.emulateMedia({reducedMotion:'no-preference'});pass('reduced-motion preference is respected');
  await click('[data-action="display"][data-display="bilingual"]');
- await click('[data-action="article-list"]');await click('.dialog [data-action="open"][data-article="library"]');
- assert.equal(await page.locator('[data-display="bilingual"][aria-pressed="true"]').count(),1,'same-reader article menu preserves display choice');
+ assert.equal(await page.locator('[data-action="article-list"]').count(),0,'reading has no article-selection entry');
+ assert.equal(await page.locator('.practice-title button,.practice-title[role="button"]').count(),0,'the useful article title is static');
  await click('[data-action="mode"][data-mode="exam"]');
- await click('[data-action="article-list"]');await click('.dialog [data-action="open"][data-article="morning"]');
- assert.equal(await page.locator('[data-mode="exam"][aria-pressed="true"]').count(),1,'same-reader article menu preserves training mode');
  await click('[data-action="nav"][data-route="home"]');await checkOutsideReader('returned home');
  await click('.focus-open[data-action="open"]');await checkDefaultReader();
- pass('home re-entry resets intensive/hidden; reader article menu preserves selected mode/display');
+ pass('reader has a static title; home re-entry resets intensive/hidden');
  await click('[data-action="nav"][data-route="library"]');await checkOutsideReader('library');
  await click('[data-action="nav"][data-route="profile"]');await checkOutsideReader('profile');
  assert.doesNotMatch(await page.locator('#app').innerText(),/学习天数/);
  assert.doesNotMatch(await page.locator('.activity-card').innerText(),/做题活跃度|过去一年|(?:^|\s)[少多](?:\s|$)/,'calendar omits visible decorative headings and legend prose');
  assert.ok(await page.locator('.activity-card').getAttribute('aria-label'),'calendar retains an accessible name');
  assert.ok(await page.locator('.activity-legend').getAttribute('aria-label'),'calendar color key retains an accessible description');
- await speedMenu('#pref-speed');await page.keyboard.press('Escape');
- assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),1.25,'profile shares the reader speed');
- await speedMenu('#pref-speed');await chooseSpeed(.75);
+ assert.equal(await page.locator('.settings-card [data-action="speed"],#pref-speed').count(),0,'profile removes duplicate speed adjustment');
+ assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),1.25,'entering profile preserves the player rate');
+ await click('[data-action="nav"][data-route="home"]');await speedMenu();await chooseSpeed(.75);
  await page.reload();await page.locator('.focus-card').waitFor();
- await click('[data-action="nav"][data-route="profile"]');
  assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),.75,'saved speed is applied after reload');
- await speedMenu('#pref-speed');await chooseSpeed(1);
- pass('profile uses the same explicit speed control and the selected rate survives reload');
+ await speedMenu();await chooseSpeed(1);await click('[data-action="nav"][data-route="profile"]');
+ pass('speed exists only in the player and its selected rate survives reload');
  assert.equal(await numberStat('today-listening-minutes'),3,'listening minutes count today instead of all past days');
  assert.equal(await numberStat('today-articles'),1,'completed article count includes today only');
  assert.match(await page.locator('.statistics').innerText(),/今日完成\s*·\s*篇/,'today completion uses articles instead of question submissions');
@@ -270,6 +270,7 @@ try{
  const todayAfter=await day(dateKeys.today);assert.equal(todayAfter.count,7);assert.ok(todayAfter.level>=todayBefore.level,'more completed questions increase activity level');
  const lightDay=todayAfter.background;const lightRgb=rgb(lightDay);assert.ok(lightRgb[1]>lightRgb[0]&&lightRgb[1]>lightRgb[2],'daytime activity uses green');
  await click('[data-action="theme"][data-theme="dark"]');
+ await page.waitForTimeout(600);
  const darkDay=await day(dateKeys.today),darkRgb=rgb(darkDay.background);assert.ok(darkRgb[0]>darkRgb[1]&&darkRgb[1]>darkRgb[2],'nighttime activity uses orange');
  assert.equal(darkDay.count,7,'changing palette retains the activity count');
  await page.waitForTimeout(220);
@@ -300,13 +301,13 @@ try{
  for(const viewport of [{width:360,height:800},{width:393,height:873},{width:430,height:932}]){
   await page.setViewportSize(viewport);await filter.click();await page.locator('.filter-popover').waitFor();
   const bounds=await page.locator('.filter-popover').boundingBox();assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=viewport.width&&bounds.y+bounds.height<=viewport.height,'the custom year menu fits the phone viewport');
-  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
  }
  await page.setViewportSize({width:393,height:873});
  await filter.click();await page.locator('.filter-popover').waitFor();
- await page.keyboard.press('Escape');assert.equal(await page.locator('.filter-popover').count(),0,'Escape dismisses the filter without changing the selection');
+ await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));assert.equal(await page.locator('.filter-popover').count(),0,'Escape dismisses the filter without changing the selection');
  assert.equal(await filter.evaluate(b=>getComputedStyle(b).outlineStyle),'none','filter focus adds no outer rounded rectangle');
- await filter.click();await page.locator('.filter-shade').click({position:{x:3,y:3}});assert.equal(await page.locator('.filter-popover').count(),0,'outside tap cancels filter selection');
+ await filter.click();await page.locator('.filter-shade').click({position:{x:3,y:3}});await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing'));assert.equal(await page.locator('.filter-popover').count(),0,'outside tap cancels filter selection');
  await filter.click();await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value="2001"]');
  assert.equal(await filter.getAttribute('aria-expanded'),'false','applying a year dismisses its menu');
  assert.equal((await filter.locator('.filter-value').innerText()).trim(),'2001','the year filter displays its applied value');
@@ -320,15 +321,15 @@ try{
  assert.equal(selectedStyle.background,'rgba(0, 0, 0, 0)','the selection glyph has no colored rectangle');assert.equal(selectedStyle.outline,'none');assert.equal(selectedStyle.shadow,'none');
  await page.waitForFunction(()=>Number(getComputedStyle(document.querySelector('.paper-group-row.is-selected'),'::before').opacity)===1);
  const selectionMotion=await selectedControl.evaluate(()=>window.__selectionMotion);
- assert.ok(selectionMotion.some(event=>event.type==='animationstart'&&event.animation==='selection-sheen'),'selecting a paper runs its material sheen on the retained row');
+ assert.ok(selectionMotion.some(event=>event.type==='transitionrun'&&event.property==='opacity'),'selecting a paper fades its optical selection layer on the retained row');
  assert.ok(selectionMotion.some(event=>event.type==='transitionrun'&&event.tag==='path'&&['opacity','transform'].includes(event.property)),'the check mark animates into place on its retained SVG path');
  const nightGlass=await page.locator('.paper-group-row.is-selected').evaluate(e=>({background:getComputedStyle(e,'::before').backgroundColor,opacity:Number(getComputedStyle(e,'::before').opacity),image:getComputedStyle(e,'::before').backgroundImage}));
- const nightGlassColor=rgb(nightGlass.background);assert.ok(nightGlassColor[0]>nightGlassColor[1]&&nightGlassColor[1]>nightGlassColor[2],'night suite selection uses an orange tinted glass layer');assert.match(nightGlass.image,/gradient/,'selected suite retains the material highlight');
+ const nightGlassColor=rgb([...nightGlass.image.matchAll(/rgba?\([^)]*\)/g)].at(-1)[0]);assert.ok(nightGlassColor[0]>nightGlassColor[1]&&nightGlassColor[1]>nightGlassColor[2],'night suite selection uses an orange tinted glass layer');assert.match(nightGlass.image,/gradient/,'selected suite retains the material highlight');
  const selectedTitle=page.locator('.paper-group-row.is-selected .paper-group-copy h3');
  const nightSelection=rgb(await selectedTitle.evaluate(e=>getComputedStyle(e).color));assert.ok(nightSelection[0]>nightSelection[1]&&nightSelection[1]>nightSelection[2],'night mode identifies the selected suite with orange');
  await setTheme('light','library');
- await page.waitForFunction(()=>{const row=document.querySelector('.paper-group-row.is-selected'),css=getComputedStyle(row,'::before'),values=css.backgroundColor.match(/[\d.]+/g).slice(0,3).map(Number);return Number(css.opacity)===1&&Math.max(...values)-Math.min(...values)<=1&&values[0]<245});
- const daySelection=rgb(await page.locator('.paper-group-row.is-selected').evaluate(e=>getComputedStyle(e,'::before').backgroundColor));assert.ok(Math.max(...daySelection)-Math.min(...daySelection)<=1&&daySelection[0]<245,'day mode shades the selected suite with a neutral gray glass layer');
+ await page.waitForFunction(()=>{const row=document.querySelector('.paper-group-row.is-selected'),css=getComputedStyle(row,'::before'),values=[...css.backgroundImage.matchAll(/rgba?\([^)]*\)/g)].at(-1)[0].match(/[\d.]+/g).slice(0,3).map(Number);return Number(css.opacity)===1&&Math.max(...values)-Math.min(...values)<=1&&values[0]<245});
+ const daySelection=rgb(await page.locator('.paper-group-row.is-selected').evaluate(e=>[...getComputedStyle(e,'::before').backgroundImage.matchAll(/rgba?\([^)]*\)/g)].at(-1)[0]));assert.ok(Math.max(...daySelection)-Math.min(...daySelection)<=1&&daySelection[0]<245,'day mode shades the selected suite with a neutral gray glass layer');
  await page.screenshot({path:path.join(output,'library-papers-light.png'),fullPage:true});
  await setTheme('dark','library');
  await page.waitForTimeout(180);await page.screenshot({path:path.join(output,'library-papers-dark.png'),fullPage:true});
@@ -352,13 +353,13 @@ try{
  assert.equal((await saved()).completedListeningDays[dateKeys.today],180,'a partially heard article does not increase completed listening');
  await click('.focus-open');await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
  assert.equal((await page.locator('.practice-title').innerText()).trim(),'第2篇','reader title omits question ranges');
- await click('[data-action="article-list"]');assert.deepEqual(await page.locator('.dialog .article-copy strong').allTextContents(),['第1篇','第2篇'],'reader material menu omits question ranges');await click('[data-action="close-dialog"]');
- await page.locator('#audio').evaluate(a=>a.currentTime=a.duration-.25);await page.waitForFunction(()=>!document.querySelector('#audio').seeking);
- await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').ended);
+ assert.equal(await page.locator('[data-action="article-list"]').count(),0,'reader omits the removed article picker');
+ const partialEndBefore=await watchProductionEnd();await page.locator('#audio').evaluate(a=>a.currentTime=a.duration-.25);await page.waitForFunction(()=>!document.querySelector('#audio').seeking);
+ await click('[data-action="play"]');const partialEnd=await waitProductionEnd(partialEndBefore);assert.equal(partialEnd.trusted,true,'the actual decoder reaches its endpoint before queue advance');
  assert.equal((await saved()).completedListeningDays[dateKeys.today],180,'seeking past an unheard section and reaching genuine ended does not credit a complete article');
- await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>.2});
- await page.waitForFunction(()=>{const a=document.querySelector('#audio');return a.ended&&a.paused});
+ await click('[data-action="nav"][data-route="library"]');await openLibraryArticle(page,'experience-selection','second');await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1&&!document.querySelector('#audio').seeking);const fullEndBefore=await watchProductionEnd();await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>.2});const fullEnd=await waitProductionEnd(fullEndBefore);assert.equal(fullEnd.trusted,true);
  const fullListening=await saved();assert.ok(fullListening.completedListeningDays[dateKeys.today]>181,'a full recording genuinely played from start to ended credits its listening time');
+ await click('[data-action="nav"][data-route="library"]');await openLibraryArticle(page,'experience-selection','second');
  await click('[data-action="mode"][data-mode="exam"]');assert.match(await page.locator('[data-action="toggle-question"]').first().innerText(),/第\s*5\s*题/,'cleaning material titles preserves the original question number inside the quiz');
  await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');
  assert.equal(await numberStat('today-listening-minutes'),3,'completed listening displays floor minutes while preserving the newly credited seconds');
@@ -378,12 +379,12 @@ try{
  assert.deepEqual((await saved()).homeFocus,homeBeforePreview.focus,'previewing an article preserves the last actually played home focus');
  await click('[data-action="nav"][data-route="home"]');
  assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),homeBeforePreview.paper,'home keeps the selected paper after another paper preview');
- assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'second','home keeps the last played article after another paper preview');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),homeBeforePreview.focus.article,'home keeps the last played article after another paper preview');
  await page.reload();await page.locator('.focus-card').waitFor();
  assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),homeBeforePreview.paper,'paper preview cannot change the persisted home collection');
- assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'second','article preview cannot replace the persisted played focus');
- await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'experience-selection');await click('[data-action="open"][data-paper="experience-selection"][data-article="first"]');await click('[data-action="nav"][data-route="home"]');
- assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'second','previewing another article inside the chosen paper also keeps the last played focus');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),homeBeforePreview.focus.article,'article preview cannot replace the persisted played focus');
+ const otherChosenArticle=homeBeforePreview.focus.article==='first'?'second':'first';await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'experience-selection');await click(`[data-action="open"][data-paper="experience-selection"][data-article="${otherChosenArticle}"]`);await click('[data-action="nav"][data-route="home"]');
+ assert.equal(await page.locator('.focus-play').getAttribute('data-article'),homeBeforePreview.focus.article,'previewing another article inside the chosen paper also keeps the last played focus');
  await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'listenly-original');
  const libraryPlay=page.locator('[data-action="material-play"][data-paper="listenly-original"][data-article="morning"]');
  assert.equal(await libraryPlay.count(),1,'each library article has an independent playback control');

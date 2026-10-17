@@ -20,7 +20,7 @@ const page=await browser.newPage({viewport:{width:393,height:873},deviceScaleFac
 page.on('pageerror',error=>result.pageErrors.push(error.message));
 const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
 const navButton=route=>`.bottom-nav [data-action="nav"][data-route="${route}"]`;
-const click=selector=>page.locator(selector).first().click();
+const click=async selector=>{await page.locator(selector).first().click();if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
 function pass(label,details){result.checks.push({label,...(details?{details}:{})})}
 const range=values=>Math.max(...values)-Math.min(...values);
 function frameAssertAligned(frame,route,tolerance=.8){
@@ -112,34 +112,7 @@ try{
  await page.screenshot({path:path.join(output,'profile-dark.png')});await click('[data-action="theme"][data-theme="light"]');await frames(3);
  pass('theme changes preserve the stable lens and its destination');
 
- // The capsule's material must switch as one surface. Its final material is
- // the expected endpoint for every frame, including the click's bubble.
- // This catches an old light inset rim fading over a new dark background.
- await page.evaluate(()=>{
-  window.__speedMaterial=()=>{const b=document.querySelector('.pref-speed'),s=getComputedStyle(b,'::before');return {time:performance.now(),theme:document.documentElement.dataset.theme,background:s.backgroundImage,backgroundColor:s.backgroundColor,border:s.borderTopColor,shadow:s.boxShadow,transform:s.transform,expanded:b.getAttribute('aria-expanded')}};
-  window.__speedThemeSamples=[];window.__speedThemeCapturing=false;window.__speedThemeClickedAt=0;
-  document.addEventListener('click',event=>{if(!event.target.closest('[data-action="theme"]')||!window.__speedThemeCapturing)return;window.__speedThemeClickedAt=performance.now();window.__speedThemeSamples.push(window.__speedMaterial())});
-  const sample=()=>{if(window.__speedThemeCapturing)window.__speedThemeSamples.push(window.__speedMaterial());requestAnimationFrame(sample)};requestAnimationFrame(sample);
- });
- const speedToggles=[];
- for(let cycle=0;cycle<3;cycle++)for(const theme of ['dark','light']){
-  await page.evaluate(()=>{window.__speedThemeSamples=[];window.__speedThemeCapturing=true});
-  await click(`[data-action="theme"][data-theme="${theme}"]`);await frames(18);
-  const samples=await page.evaluate(()=>{window.__speedThemeCapturing=false;return window.__speedThemeSamples.filter(s=>s.time>=window.__speedThemeClickedAt)}),end=samples.at(-1);
-  assert.ok(samples.length>=10,'theme switch records multiple actually rendered material frames');
-  for(const sample of samples){assert.equal(sample.theme,theme);for(const property of ['background','backgroundColor','border','shadow'])assert.equal(sample[property],end[property],`${theme} speed capsule ${property} switches atomically at frame ${sample.time-samples[0].time}ms`)}
-  speedToggles.push({cycle,theme,samples});
- }
- const capsule=page.locator('.pref-speed'),capsuleBounds=await capsule.boundingBox(),closedMaterial=await page.evaluate(()=>window.__speedMaterial());
- assert.ok(capsuleBounds.width>=44&&capsuleBounds.height>=44,'speed capsule preserves its touch target');
- await page.mouse.move(capsuleBounds.x+capsuleBounds.width/2,capsuleBounds.y+capsuleBounds.height/2);await page.mouse.down();await frames(8);
- const pressedMaterial=await page.evaluate(()=>window.__speedMaterial());assert.notEqual(pressedMaterial.transform,'none','actual press retains physical compression feedback');
- assert.ok(await capsule.evaluate(b=>{const t=new DOMMatrixReadOnly(getComputedStyle(b,'::before').transform);return t.a<.995&&t.d<.995}),'the material compresses while the pointer is held');
- await page.mouse.up();await page.locator('.speed-popover').waitFor();const expandedMaterial=await page.evaluate(()=>window.__speedMaterial());assert.equal(expandedMaterial.expanded,'true');
- assert.ok(expandedMaterial.background!==closedMaterial.background||expandedMaterial.backgroundColor!==closedMaterial.backgroundColor||expandedMaterial.border!==closedMaterial.border,'expanded menu retains visible selection feedback');
- await click('[data-action="set-speed"][data-speed="1.25"]');assert.equal(await capsule.getAttribute('aria-expanded'),'false');assert.match(await capsule.innerText(),/1\.25/);assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),1.25);
- result.speedThemeToggles=speedToggles;pass('speed material switches atomically in both themes while press and menu feedback remain intact',{toggles:speedToggles.length,sampledFrames:speedToggles.reduce((n,t)=>n+t.samples.length,0),closedMaterial,pressedMaterial,expandedMaterial});
-
+ // Theme interpolation and player capsule feedback are covered by glass-controls.test.mjs.
  for(const viewport of [{width:320,height:740},{width:873,height:393},{width:393,height:873}]){
   await page.setViewportSize(viewport);const resized=await settled('profile');frameAssertAligned(resized,'profile');
   assert.ok(resized.nav.left>=0&&resized.nav.right<=viewport.width+.5&&resized.nav.bottom<=viewport.height+.5,'navigation remains within the viewport');

@@ -110,11 +110,11 @@ export async function verifyCompactPlayerControls(page){
  assert.equal(await page.locator('#audio').evaluate(audio=>audio.playbackRate),rate,'opening the speed menu keeps the actual audio rate');
  const choices=page.locator('.speed-popover [data-action="set-speed"]');
  assert.deepEqual(await choices.evaluateAll(buttons=>buttons.map(button=>Number(button.dataset.speed))),[.75,1,1.25,1.5],'the menu offers the four explicit playback rates');
- await page.keyboard.press('Escape');
+ await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
  assert.equal(await page.locator('.speed-popover').count(),0,'Escape cancels speed adjustment');
  for(const speed of [.75,1,1.25,1.5,rate]){
   await page.locator('[data-action="speed"]').click();
-  await page.locator(`.speed-popover [data-action="set-speed"][data-speed="${speed}"]`).click();
+  await page.locator(`.speed-popover [data-action="set-speed"][data-speed="${speed}"]`).click();await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing'));
   assert.equal(await page.locator('#audio').evaluate(audio=>audio.playbackRate),speed,'explicit speed selection updates the decoded recording');
   assert.equal(await page.locator('[data-action="speed"]').getAttribute('aria-expanded'),'false','selecting a speed dismisses its menu');
   assert.match(await page.locator('[data-action="speed"]').innerText(),new RegExp(`^${String(speed).replace('.','\\.')}\\s*×$`),'the speed control displays the applied value');
@@ -122,23 +122,22 @@ export async function verifyCompactPlayerControls(page){
  await page.locator('.sentence').first().click();
  assert.equal(await page.locator('#audio').evaluate(audio=>audio.paused),false,'a sentence still starts audio');
  await page.locator('[data-action="play"]').click();
- const loop=page.locator('[data-action="loop"]');
- await loop.click();
- assert.equal(await loop.getAttribute('aria-pressed'),'true','loop button enables sentence repetition');
- await page.locator('#audio').evaluate(audio=>{audio.currentTime=5.3;audio.dispatchEvent(new Event('timeupdate'))});
- assert.ok(await page.locator('#audio').evaluate(audio=>audio.currentTime)<.4,'sentence loop returns to the start at its boundary');
- await loop.click();
- assert.equal(await loop.getAttribute('aria-pressed'),'false','loop can be disabled');
+ const playbackMode=page.locator('[data-action="playback-mode"]');
+ for(const mode of ['repeat','shuffle','sequential']){
+  await playbackMode.click();
+  assert.equal(await playbackMode.getAttribute('data-playback-mode'),mode,'playback mode cycles immediately through the three supported modes');
+ }
+ assert.equal(await page.locator('[data-action="loop"]').count(),0,'the obsolete sentence-loop action is removed');
 }
 
 export async function verifyReaderScrollAndArticleMenu(page){
- // The compact title menu retains the same-paper article navigation.
- await page.locator('[data-action="article-list"]').click();
- assert.equal(await page.locator('.dialog .article-button').count(),2);
- await page.locator('.dialog [data-action="open"][data-article="library"]').click();
+ // Article selection belongs to home/library rather than the reading title.
+ assert.equal(await page.locator('[data-action="article-list"]').count(),0,'reader has no article-selection action');
+ await page.locator('[data-action="nav"][data-route="library"]').click();
+ await openLibraryArticle(page,'listenly-original','library');
  assert.match(await page.locator('.practice-title').innerText(),/little library/);
- await page.locator('[data-action="article-list"]').click();
- await page.locator('.dialog [data-action="open"][data-article="morning"]').click();
+ await page.locator('[data-action="nav"][data-route="library"]').click();
+ await openLibraryArticle(page,'listenly-original','morning');
  assert.match(await page.locator('.practice-title').innerText(),/A small change/);
 
  // Use original, deliberately long content so both text layouts can scroll.

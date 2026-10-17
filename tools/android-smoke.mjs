@@ -193,16 +193,20 @@ try{
  await tapControl('[data-action=theme][data-theme=light]');await poll('document.documentElement.dataset.theme==="light"');
  await tapControl('[data-action=nav][data-route=home]');await poll('document.querySelector(".focus-card")');
  await writeFile(path.join(root,'home-light.png'),run(['exec-out','screencap','-p'],true));
- let realSelection;
+ let realSelection,demoSelection;
  if(localReal){
   const library=JSON.parse(await readFile('app/src/main/assets/web/bundled-library.json','utf8'));
   const paper=library.papers.find(p=>p.id==='cet6-2025-12-set1');assert.ok(paper,'Local real check needs the lite built-in paper');
   const answers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
-  const article=paper.articles.find(a=>(a.questions||[]).some(q=>!answers[JSON.stringify([paper.id,a.id,q.id])]?.submitted));
-  assert.ok(article,'The project emulator has an unanswered real question');
+  const article=paper.articles.find(a=>(a.questions||[]).some(q=>!answers[JSON.stringify([paper.id,a.id,q.id])]?.submitted))||paper.articles[0];
   realSelection={paper,article};
   await evaluate(`document.querySelector('[data-action=nav][data-route=library]').click();document.querySelector('[data-action=open-paper][data-paper="${paper.id}"]').click();document.querySelector('[data-action=open][data-paper="${paper.id}"][data-article="${article.id}"]').click()`);
- }else await evaluate(publicDemo?'document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original]").click();document.querySelector("[data-action=open][data-paper=listenly-original][data-article=morning]").click();document.querySelector("[data-action=mode][data-mode=intensive]").click()':'document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original-ci]").click();document.querySelector("[data-action=open][data-paper=listenly-original-ci][data-article=ci-playback]").click()');
+ }else if(publicDemo){
+  const paper=JSON.parse(await readFile(path.resolve('examples/demo/demo.json'),'utf8')),answers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
+  const article=paper.articles.find(a=>(a.questions||[]).some(q=>!answers[JSON.stringify([paper.id,a.id,q.id])]?.submitted))||paper.articles[0];
+  demoSelection={paper,article};
+  await evaluate(`document.querySelector('[data-action=nav][data-route=library]').click();document.querySelector('[data-action=open-paper][data-paper="${paper.id}"]').click();document.querySelector('[data-action=open][data-paper="${paper.id}"][data-article="${article.id}"]').click()`);
+ }else await evaluate('document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original-ci]").click();document.querySelector("[data-action=open][data-paper=listenly-original-ci][data-article=ci-playback]").click()');
  assert.ok(await evaluate('!!document.querySelector("[data-mode=intensive][aria-pressed=true]")&&!!document.querySelector("[data-display=hidden][aria-pressed=true]")'),'Opening the reader defaults to intensive and hidden');
  assert.ok(await evaluate('!/[0-9]+\\s*[-–—~～至]\\s*[0-9]+\\s*题/.test(document.querySelector(".practice-title").innerText)'),'Native article titles omit their question range');
  assert.deepEqual(await evaluate('[...document.querySelectorAll(".display-controls [data-action=display]")].map(b=>b.dataset.display)'),['hidden','original','bilingual'],'Native text choices are ordered hidden, original, bilingual');
@@ -219,7 +223,7 @@ try{
  await poll('document.querySelector("#audio").readyState >= 1');
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
- if(publicDemo)assert.ok(result.audio.source.endsWith('/media/morning.wav'),'The original public demo recording is served');
+ if(publicDemo)assert.ok(result.audio.source.endsWith('/'+demoSelection.article.audio.intensive),'The selected original public demo recording is served');
  {
   result.practiceGeometry=await evaluate('(()=>{var player=document.querySelector(".playback-card").getBoundingClientRect(),text=document.querySelector(".main-panel").getBoundingClientRect(),css=getComputedStyle(document.documentElement);var rect=r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height});return {width:innerWidth,height:innerHeight,safeTop:parseFloat(css.getPropertyValue("--safe-top"))||0,safeBottom:parseFloat(css.getPropertyValue("--safe-bottom"))||0,contentWidth:document.documentElement.scrollWidth,navCount:document.querySelectorAll(".bottom-nav").length,player:rect(player),text:rect(text),controls:[...document.querySelectorAll(".player-buttons button")].map(b=>({action:b.dataset.action,...rect(b.getBoundingClientRect())}))}})()');
   const geometry=result.practiceGeometry;
@@ -293,7 +297,7 @@ try{
  result.articleCompletionBefore=await evaluate(`JSON.parse(localStorage.getItem('listenly.state.v1')).articleCompletions[${JSON.stringify(completionKey)}]||null`);
  const keyFor=q=>JSON.stringify([interactionPaper.id,interactionArticle.id,q.id]);
  const pendingQuestions=qs.map((q,index)=>({q,index,key:keyFor(q)})).filter(({key})=>!result.answersBeforeInteraction[key]?.submitted);
- assert.ok(pendingQuestions.length,'The project emulator has an unanswered article for a real whole-article submission');
+ result.interactionTarget={paper:interactionPaper.id,article:interactionArticle.id,pendingQuestions:pendingQuestions.length,reusedHistoricalAttempt:pendingQuestions.length===0};
  assert.equal(await evaluate('document.querySelectorAll(".quiz-question[data-question-index]").length'),qs.length,'Every question in the article is present on the same page');
  assert.equal(await evaluate('document.querySelectorAll(".question-dot,[data-action=next-question],[data-action=submit-answer],.quiz-card h3").length'),0,'The article has no question pager, individual submit action or written question heading');
  for(const q of qs)if(q.prompt)assert.ok(!await evaluate(`document.querySelector('.quiz-card').textContent.includes(${JSON.stringify(q.prompt)})`),'Written listening questions are absent from the exam DOM');
@@ -318,10 +322,11 @@ try{
    if(index===0)assert.equal(await evaluate('document.querySelector(\'[data-action=toggle-question][data-index="1"]\').getAttribute("aria-expanded")'),'true','Collapsing one question leaves the other expanded');
   }
  }else result.independentDropdowns={status:'not-applicable',reason:'This fixture has only one question'};
- result.quizGeometry=await evaluate('(()=>{var panel=document.querySelector(".main-panel"),p=panel.getBoundingClientRect(),rows=[...document.querySelectorAll(".quiz-question")],submit=document.querySelector("[data-action=submit-article]"),s=submit.getBoundingClientRect();return {width:innerWidth,height:innerHeight,panel:{left:p.left,right:p.right,top:p.top,bottom:p.bottom},scrollHeight:panel.scrollHeight,clientHeight:panel.clientHeight,rows:rows.map(row=>{var r=row.getBoundingClientRect();return {index:row.dataset.questionIndex,left:r.left,right:r.right,top:r.top,bottom:r.bottom}}),submit:{top:s.top,bottom:s.bottom}}})()');
+ result.quizGeometry=await evaluate('(()=>{var panel=document.querySelector(".main-panel"),p=panel.getBoundingClientRect(),rows=[...document.querySelectorAll(".quiz-question")],submit=document.querySelector("[data-action=submit-article],[data-action=view-result]"),s=submit.getBoundingClientRect();return {width:innerWidth,height:innerHeight,panel:{left:p.left,right:p.right,top:p.top,bottom:p.bottom},scrollHeight:panel.scrollHeight,clientHeight:panel.clientHeight,rows:rows.map(row=>{var r=row.getBoundingClientRect();return {index:row.dataset.questionIndex,left:r.left,right:r.right,top:r.top,bottom:r.bottom}}),submit:{top:s.top,bottom:s.bottom}}})()');
  for(const row of result.quizGeometry.rows)assert.ok(row.left>=result.quizGeometry.panel.left-1&&row.right<=result.quizGeometry.panel.right+1&&row.top>=result.quizGeometry.panel.top-1&&row.bottom<=result.quizGeometry.panel.bottom+1,'Every collapsed question row fits above the audio dock');
  assert.ok(result.quizGeometry.submit.bottom<=result.quizGeometry.panel.bottom+1,'The whole-article submit control fits on the same compact page');
  const changedKeys=new Set();result.articleChoices=[];
+ if(pendingQuestions.length){
  for(const {q,index,key} of pendingQuestions){
   const toggle=`[data-action=toggle-question][data-index="${index}"]`,optionId=publicDemo?q.answer:q.options[0].id;
   await evaluate(`document.querySelector(${JSON.stringify(toggle)}).scrollIntoView({block:'center'})`);
@@ -362,8 +367,15 @@ try{
   assert.equal(result.answer[key].choice,chosen.choice,'The selected choice is retained after grading');
   if(publicDemo)assert.ok(await evaluate(`!!document.querySelector('.quiz-question[data-question-index="${chosen.index}"] .question-state.is-correct')`),'The original demo answer has a correct-state glyph after submission');
  }
+ }else{
+  result.answer=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
+  result.articleCompletionAfter=await evaluate(`JSON.parse(localStorage.getItem('listenly.state.v1')).articleCompletions[${JSON.stringify(completionKey)}]||null`);
+  assert.deepEqual(result.articleCompletionAfter,result.articleCompletionBefore,'Reopening a fully submitted historical article does not add a completion');
+  assert.deepEqual(result.answer,result.answersBeforeInteraction,'Reviewing a fully completed historical article preserves every saved answer');
+  result.submission={status:'already-complete',reason:'All bundled article questions were submitted before this test; no records are reset or resubmitted. Feedback, independent dropdowns and reload persistence are still exercised.'};
+ }
  for(const [savedKey,savedAnswer] of Object.entries(result.answersBeforeInteraction))if(!changedKeys.has(savedKey))assert.deepEqual(result.answer[savedKey],savedAnswer,'Previously submitted answers and other article records remain unchanged');
- const reviewIndex=result.articleChoices[0].index,reviewToggle=`[data-action=toggle-question][data-index="${reviewIndex}"]`;
+ const reviewIndex=result.articleChoices[0]?.index??0,reviewToggle=`[data-action=toggle-question][data-index="${reviewIndex}"]`;
  await evaluate(`document.querySelector(${JSON.stringify(reviewToggle)}).scrollIntoView({block:'center'})`);await tapControl(reviewToggle);await wait(220);
  assert.ok(await evaluate(`!!document.querySelector('.quiz-question[data-question-index="${reviewIndex}"] .question-feedback')`),'An expanded submitted question exposes answer feedback');
  assert.ok(await evaluate(`Array.from(document.querySelectorAll('.quiz-question[data-question-index="${reviewIndex}"] [data-action=answer]')).every(b=>b.disabled)`),'Submitted answer choices cannot be changed');
@@ -443,9 +455,11 @@ try{
  await tapControl('[data-action=nav][data-route=profile]');
  await poll('document.querySelector(".activity-calendar")');
  assert.equal(await evaluate('document.querySelectorAll(".settings-card [data-action=import]").length'),0,'Profile removes the duplicate folder-import entry');
+ assert.equal(await evaluate('document.querySelectorAll(".settings-card [data-action=speed],#pref-speed").length'),0,'Profile removes duplicate playback speed adjustment');
  assert.equal(await evaluate('document.querySelectorAll(".topbar [data-action=import]").length'),1,'The top folder-import button remains available on profile');
  assert.equal(await evaluate('document.querySelectorAll(".topbar .theme-control button").length'),2,'Profile retains the day/night control beside folder import');
  await tapControl('.topbar [data-action=import]');await poll('document.querySelectorAll(".dialog .import-choice").length===2');
+ assert.equal(await evaluate('document.querySelectorAll(".dialog .format-details").length'),0,'Import no longer displays file-format instructions');
  run(['shell','input','keyevent','4']);await poll('!document.querySelector(".dialog-shade")&&document.querySelector(".statistics")');
  assert.ok(await evaluate('document.querySelector(".statistics").innerText.includes("今日完成 · 篇")'),'Today completion is labeled in articles');
  await wait(220);

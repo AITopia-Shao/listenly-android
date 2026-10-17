@@ -21,6 +21,10 @@ on:
       - tests/theme-home-profile.test.mjs
       - tests/nav-lens.test.mjs
       - tests/home-player.test.mjs
+      - tests/glass-controls.test.mjs
+      - tests/playback-modes.test.mjs
+      - tests/playback-modes-browser.test.mjs
+      - tests/replay-isolation.mjs
       - tests/library-navigation.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
@@ -59,6 +63,10 @@ on:
       - tests/theme-home-profile.test.mjs
       - tests/nav-lens.test.mjs
       - tests/home-player.test.mjs
+      - tests/glass-controls.test.mjs
+      - tests/playback-modes.test.mjs
+      - tests/playback-modes-browser.test.mjs
+      - tests/replay-isolation.mjs
       - tests/library-navigation.mjs
       - tools/build-apk-ci.py
       - tools/prepare-ci-assets.py
@@ -127,6 +135,8 @@ jobs:
           npm run test:quiz
           npm run test:lens
           npm run test:home
+          npm run test:glass
+          npm run test:playback
       - name: Save the original demo test APK and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -137,6 +147,7 @@ jobs:
             dist/*-phone.png
             dist/home-desktop.png
             dist/reader-layout-results.json
+            dist/ui-result.json
             .build/demo/build.json
             .build/demo/build.log
             .build/range-stream-tests/result.json
@@ -145,6 +156,8 @@ jobs:
             .build/compact-quiz/
             .build/nav-lens/
             .build/home-player/
+            .build/glass-system/browser/
+            .build/playback-modes/
           include-hidden-files: true
           retention-days: 14
 
@@ -216,7 +229,7 @@ jobs:
           } | tee .build/ci/sdk-environment.log
       - name: Test source logic
         run: |
-          node --test tests/alignment.test.mjs tests/importer.test.mjs tests/activity.test.mjs
+          npm test
           python3 tools/test-range-stream.py
       - name: Build the frontend for older Android WebView
         run: |
