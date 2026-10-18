@@ -266,18 +266,26 @@ try{
  assert.ok(result.playback.time>0,'Native audio playback progresses');
  result.speedBefore=await evaluate('document.querySelector("#audio").playbackRate');
  const nativeRates=[1,1.25,1.5,1.75,2];assert.ok(nativeRates.includes(result.speedBefore),'Native persisted speed belongs to the direct cycle');
- await evaluate('window.__speedAudio=document.querySelector("#audio");window.__speedReader=document.querySelector(".main-panel")');
+ await evaluate(`window.__speedAudio=document.querySelector('#audio');window.__speedReader=document.querySelector('.main-panel');window.__nativeSpeedEnds=[];window.__speedAudio.addEventListener('ended',function(event){var a=event.target;window.__nativeSpeedEnds.push({trusted:event.isTrusted,time:a.currentTime,duration:a.duration,src:a.currentSrc,at:performance.now()})},true)`);
  result.speedCycle=[];let nativeRate=result.speedBefore;
  for(let step=0;step<nativeRates.length;step++){
-  const beforeRateTap=await evaluate('({time:document.querySelector("#audio").currentTime,src:document.querySelector("#audio").currentSrc})');
+  const beforeRateTap=await evaluate(`(()=>{var a=document.querySelector('#audio');window.__rateReader=document.querySelector('.main-panel');return {time:a.currentTime,src:a.currentSrc,endedCount:window.__nativeSpeedEnds.length}})()`);
   nativeRate=nativeRates[(nativeRates.indexOf(nativeRate)+1)%nativeRates.length];const touch=await tapControl('[data-action=speed]');
-  const afterRateTap=await poll(`(()=>{var a=document.querySelector('#audio'),b=document.querySelector('[data-action=speed]');return !a.paused&&!a.error&&a.playbackRate===${nativeRate}&&!document.querySelector('.speed-popover:not(.filter-popover)')?{time:a.currentTime,src:a.currentSrc,rate:a.playbackRate,label:b.textContent.trim(),popup:b.getAttribute('aria-haspopup'),saved:JSON.parse(localStorage.getItem('listenly.state.v1')).speed}:null})()`);
-  assert.equal(afterRateTap.saved,nativeRate,'Native rate cycling persists immediately');assert.equal(afterRateTap.src,beforeRateTap.src,'Native rate cycling keeps the same recording');assert.ok(afterRateTap.time>=beforeRateTap.time-.05,'Native rate cycling does not move playback backwards');assert.notEqual(afterRateTap.popup,'menu','The direct native speed control does not announce a popup');assert.match(afterRateTap.label,new RegExp(`^${String(nativeRate).replace('.','\\.')}\\s*×$`));
+  const afterRateTap=await poll(`(()=>{var a=document.querySelector('#audio'),b=document.querySelector('[data-action=speed]');return !a.paused&&!a.error&&a.playbackRate===${nativeRate}&&!document.querySelector('.speed-popover:not(.filter-popover)')?{time:a.currentTime,src:a.currentSrc,rate:a.playbackRate,label:b.textContent.trim(),popup:b.getAttribute('aria-haspopup'),saved:JSON.parse(localStorage.getItem('listenly.state.v1')).speed,audioSame:a===window.__speedAudio,readerSame:document.querySelector('.main-panel')===window.__rateReader,ends:window.__nativeSpeedEnds.slice(${beforeRateTap.endedCount})}:null})()`);
   result.speedCycle.push({before:beforeRateTap,touch,after:afterRateTap});
+  // Slow emulator input may span the real end of the 24-second fixture. A
+  // trusted end captured at its actual duration legitimately starts the queue;
+  // it must not disguise a speed button resetting or replacing live playback.
+  const naturalEnd=afterRateTap.ends.some(event=>event.trusted&&Number.isFinite(event.duration)&&event.duration>0&&event.time>=event.duration-.05);
+  assert.equal(afterRateTap.saved,nativeRate,'Native rate cycling persists immediately');assert.ok(afterRateTap.audioSame,'Native rate cycling keeps the same audio element');assert.ok(afterRateTap.readerSame||naturalEnd,'A speed tap cannot replace the reader without a real recording ending');
+  if(!naturalEnd){assert.equal(afterRateTap.src,beforeRateTap.src,'Native rate cycling keeps the same recording');assert.ok(afterRateTap.time>=beforeRateTap.time-.05,'Native rate cycling does not move playback backwards')}
+  assert.notEqual(afterRateTap.popup,'menu','The direct native speed control does not announce a popup');assert.match(afterRateTap.label,new RegExp(`^${String(nativeRate).replace('.','\\.')}\\s*×$`));
  }
  assert.equal(nativeRate,result.speedBefore,'Five native taps return to the initial rate');
- result.speedPlayback=await poll(`(()=>{var a=document.querySelector('#audio');return !a.paused&&a.playbackRate===${result.speedBefore}&&!a.error&&a.currentTime>${result.playback.time}+.1?{time:a.currentTime,rate:a.playbackRate}:null})()`);
- assert.ok(await evaluate('window.__speedAudio===document.querySelector("#audio")&&window.__speedReader===document.querySelector(".main-panel")'),'Native speed cycling retains the existing audio and reader');
+ const progressStart=await evaluate('({time:document.querySelector("#audio").currentTime,ends:window.__nativeSpeedEnds.length})');
+ result.speedPlayback=await poll(`(()=>{var a=document.querySelector('#audio'),ends=window.__nativeSpeedEnds.slice(${progressStart.ends});return !a.paused&&a.playbackRate===${result.speedBefore}&&!a.error&&(a.currentTime>${progressStart.time}+.1||ends.some(e=>e.trusted&&e.time>=e.duration-.05))?{time:a.currentTime,rate:a.playbackRate,ends}:null})()`);
+ result.speedNaturalEnds=await evaluate('window.__nativeSpeedEnds');
+ assert.ok(await evaluate('window.__speedAudio===document.querySelector("#audio")&&(window.__speedReader===document.querySelector(".main-panel")||window.__nativeSpeedEnds.some(e=>e.trusted&&e.time>=e.duration-.05))'),'Native speed cycling retains its nodes through each tap; only a real queue transition may replace the reader');
  if(publicDemo){
   await tapPlay();
   result.pause=await poll('(()=>{var a=document.querySelector("#audio");return a.paused?{paused:a.paused,time:a.currentTime}:null})()');
