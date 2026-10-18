@@ -25,7 +25,7 @@ export async function clickAppControl(page,selector){
   await page.locator('.focus-card').waitFor();
  }
  await page.locator(selector).first().click();
- if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
+ if(/set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
 }
 
 export const navigateToLibrary=page=>clickAppControl(page,'[data-action="nav"][data-route="library"]');

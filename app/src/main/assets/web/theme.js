@@ -1,67 +1,55 @@
-// Animate every color token on one clock. Rapid reversals start at the visible
-// palette, so a glass rim can never arrive before its underlying surface.
-const root = document.documentElement;
-const colorPattern = /#[\da-f]{3,8}\b|rgba?\([^)]*\)/gi;
-let frame = 0, initialized = false;
-const tokens = new Set();
-function collect(rules) {
-  for (const rule of rules) {
-    if (rule.style && /^:root/.test(rule.selectorText || '')) {
-      for (let i = 0; i < rule.style.length; i++) {
-        const name = rule.style[i];
-        if (name.startsWith('--') && colorPattern.test(rule.style.getPropertyValue(name))) tokens.add(name);
-        colorPattern.lastIndex = 0;
-      }
-    }
-    if (rule.cssRules) collect(rule.cssRules);
-  }
+// Change the palette only at its endpoints. Actual CSS colors and wallpaper
+// opacity interpolate in the browser, without invalidating every inherited
+// custom property on every animation frame or replacing any live controls.
+const root=document.documentElement;
+const reduced=matchMedia('(prefers-reduced-motion: reduce)');
+const duration=300;
+let initialized=false,timer=0,pending=null,wallpaper=null;
+
+function complete(){
+  clearTimeout(timer);timer=0;
+  const callback=pending?.callback;pending=null;
+  delete root.dataset.themeTransition;
+  callback?.();
 }
-function rgba(value) {
-  if (value[0] === '#') {
-    let h = value.slice(1);
-    if (h.length < 5) h = [...h].map(c => c + c).join('');
-    return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)).concat(h.length === 8 ? parseInt(h.slice(6), 16) / 255 : 1);
-  }
-  const parts = value.match(/[\d.]+/g).map(Number);
-  return parts.length === 3 ? [...parts, 1] : parts;
+
+function wallpaperSettled(){
+  return !wallpaper||Math.abs(Number(getComputedStyle(wallpaper).opacity)-(pending?.theme==='dark'?1:0))<.001;
 }
-export function transitionTheme(theme, onFinish) {
-  cancelAnimationFrame(frame);
-  if (!tokens.size) for (const sheet of document.styleSheets) { try { collect(sheet.cssRules); } catch {} }
-  const before = getComputedStyle(root), start = new Map(), fromWallpaper=Number(before.getPropertyValue('--wallpaper-night'))||0;
-  for (const name of tokens) start.set(name, before.getPropertyValue(name).trim());
-  for (const name of tokens) root.style.removeProperty(name);
-  root.dataset.theme = theme;
-  const toWallpaper=theme==='dark'?1:0;
-  const target = getComputedStyle(root), colors = [];
-  for (const name of tokens) {
-    const a = start.get(name), b = target.getPropertyValue(name).trim();
-    const from = (a.match(colorPattern) || []).map(rgba), to = (b.match(colorPattern) || []).map(rgba);
-    if (a !== b && from.length && from.length === to.length) colors.push({name, template:b, from, to});
-  }
-  const finish = () => {
-    frame = 0; delete root.dataset.themeTransition;
-    for (const name of tokens) root.style.removeProperty(name);
-    root.style.removeProperty('--wallpaper-night');
-    onFinish?.();
-  };
-  if (!initialized || matchMedia('(prefers-reduced-motion: reduce)').matches || !colors.length) {
-    initialized = true; finish(); return;
-  }
-  const began = performance.now();
-  root.dataset.themeTransition = 'true';
-  function paint(now) {
-    const p = Math.min(1, (now - began) / 460), eased = p * p * (3 - 2 * p);
-    root.style.setProperty('--wallpaper-night',String(fromWallpaper+(toWallpaper-fromWallpaper)*eased));
-    for (const {name, template, from, to} of colors) {
-      let index = 0;
-      root.style.setProperty(name, template.replace(colorPattern, () => {
-        const a = from[index], b = to[index++];
-        const values = a.map((v, i) => v + (b[i] - v) * eased);
-        return `rgba(${values.slice(0, 3).map(Math.round).join(',')},${values[3].toFixed(4)})`;
-      }));
-    }
-    if (p < 1) frame = requestAnimationFrame(paint); else finish();
-  }
-  paint(began);
+
+function wallpaperEnded(event){
+  if(pending&&event.target===wallpaper&&event.propertyName==='opacity'&&wallpaperSettled())complete();
 }
+
+export function transitionTheme(value,onFinish){
+  const theme=value==='dark'?'dark':'light';
+  if(!initialized||reduced.matches){
+    initialized=true;clearTimeout(timer);pending=null;
+    delete root.dataset.themeTransition;
+    if(root.dataset.theme!==theme)root.dataset.theme=theme;
+    onFinish?.();return;
+  }
+  // Re-selecting an appearance does not restart its native transition. The
+  // latest completion callback still belongs to the current application state.
+  if(root.dataset.theme===theme){
+    if(pending)pending.callback=onFinish;else onFinish?.();
+    return;
+  }
+  clearTimeout(timer);
+  const night=document.querySelector('.wallpaper-night');
+  if(night!==wallpaper){
+    wallpaper?.removeEventListener('transitionend',wallpaperEnded);
+    wallpaper=night;wallpaper?.addEventListener('transitionend',wallpaperEnded);
+  }
+  pending={theme,callback:onFinish};
+  root.dataset.themeTransition='true';
+  root.dataset.theme=theme;
+  // CSS reversals continue at the currently displayed color/opacity and may
+  // finish sooner than a full transition. A timer covers hidden documents and
+  // old WebViews that do not deliver transitionend reliably.
+  timer=setTimeout(complete,duration+100);
+}
+
+const motionChanged=()=>{if(reduced.matches&&pending)complete()};
+if(reduced.addEventListener)reduced.addEventListener('change',motionChanged);
+else if(reduced.addListener)reduced.addListener(motionChanged);

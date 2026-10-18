@@ -5,7 +5,10 @@ const PRESSES='button,[role="button"],summary,a[href],[data-action]';
 const STATIC_LENSES='.transport-pill,.speed-btn,.big-play,.row-play,.glass-symbol,.speed-popover,.dialog';
 const SVG='http://www.w3.org/2000/svg';
 const groups=new Map(),presses=new Map(),pointers=new Map(),filters=new Map();
+const pendingRoots=new Set();
+const SCANNABLE=`${SEGMENTS},${PRESSES},${STATIC_LENSES}`;
 let observer=null,mountedRoot=null,scheduled=0,motionFrame=0,motionTime=0,optics=null,defs=null,filterNumber=0,reduced=null;
+let pendingCleanup=false;
 const removers=[];
 
 export function advanceSpring(position,velocity,target,elapsed,stiffness=460,damping=31){
@@ -52,13 +55,15 @@ function refraction(width,height,radius,bend){
   filter.appendChild(map);filter.appendChild(displacement);defs.appendChild(filter);const value=`url(#${id})`;filters.set(key,value);return value;
 }
 
-export function ensureLens(element,radius){
-  if(!element||!element.isConnected)return;
+function measureLens(element,radius){
+  if(!element||!element.isConnected)return null;
   const css=getComputedStyle(element),isSpeed=element.classList.contains('speed-btn'),rawX=css.getPropertyValue('--lens-inset-x').trim(),rawY=css.getPropertyValue('--lens-inset-y').trim(),insetX=rawX?parseFloat(rawX)||0:0,insetY=rawY?parseFloat(rawY)||0:isSpeed?6:0,width=element.offsetWidth-insetX*2,height=element.offsetHeight-insetY*2;
-  if(width<=0||height<=0)return;
+  if(width<=0||height<=0)return null;
   const round=radius||parseFloat(css.getPropertyValue('--lens-radius'))||parseFloat(css.borderTopLeftRadius)||Math.min(18,height/2),bend=width*height>12000?3:6;
-  const value=refraction(width,height,round,bend);if(value&&element.style.getPropertyValue('--lens-filter')!==value)element.style.setProperty('--lens-filter',value);
+  return {element,width,height,round,bend};
 }
+function applyLens(measured){if(!measured)return;const {element,width,height,round,bend}=measured,value=refraction(width,height,round,bend);if(value&&element.style.getPropertyValue('--lens-filter')!==value)element.style.setProperty('--lens-filter',value)}
+export function ensureLens(element,radius){applyLens(measureLens(element,radius))}
 
 function createGroup(key){
   return {key,element:null,lens:null,buttons:[],centers:[],x:0,velocity:0,strain:0,strainVelocity:0,target:0,width:0,barWidth:0,height:0,top:0,active:-1,moving:false,initialized:false,detachedAt:0};
@@ -76,17 +81,21 @@ function pressKey(element){
   const action=element.getAttribute('data-action');if(!action)return '';
   return `${element.tagName}:${Object.keys(element.dataset).filter(key=>key!=='glassPress').sort().map(key=>`${key}=${element.dataset[key]}`).join('|')}`;
 }
-function syncGroup(group,element){
+function syncGroup(group,element,forceMeasure=false){
   const changed=group.element!==element,wasPresent=!!(group.element&&!group.detachedAt),oldWidth=group.barWidth;
-  group.element=element;group.buttons=Array.from(element.children).filter(child=>child.tagName==='BUTTON');
+  const buttons=Array.from(element.children).filter(child=>child.tagName==='BUTTON'),sameButtons=buttons.length===group.buttons.length&&buttons.every((button,index)=>button===group.buttons[index]);
+  group.element=element;group.buttons=buttons;
   if(!group.buttons.length)return;
-  if(changed){group.lens=document.createElement('span');group.lens.className='glass-segment-lens';group.lens.setAttribute('aria-hidden','true');element.insertBefore(group.lens,element.firstChild)}
-  const css=getComputedStyle(element),leftBorder=parseFloat(css.borderLeftWidth)||0,topBorder=parseFloat(css.borderTopWidth)||0,inset=parseFloat(css.getPropertyValue('--segment-inset'))||3,first=group.buttons[0];
-  const bounds=element.getBoundingClientRect();group.barWidth=element.clientWidth;group.height=Math.max(1,first.offsetHeight-inset*2);group.width=Math.max(1,first.offsetWidth-inset*2);
-  group.centers=group.buttons.map(button=>{const r=button.getBoundingClientRect();return r.left-bounds.left-leftBorder+r.width/2});
-  const firstBounds=first.getBoundingClientRect();group.top=firstBounds.top-bounds.top-topBorder+(firstBounds.height-group.height)/2;
-  group.lens.style.cssText=`position:absolute;left:0;top:${group.top}px;width:${group.width}px;height:${group.height}px;pointer-events:none`;
-  const filter=refraction(group.width,group.height,group.height/2,6);if(filter)group.lens.style.setProperty('--lens-filter',filter);
+  const missingLens=!group.lens||group.lens.parentNode!==element;
+  if(changed||missingLens){group.lens=document.createElement('span');group.lens.className='glass-segment-lens';group.lens.setAttribute('aria-hidden','true');element.insertBefore(group.lens,element.firstChild)}
+  if(changed||missingLens||!sameButtons||forceMeasure){
+    const css=getComputedStyle(element),leftBorder=parseFloat(css.borderLeftWidth)||0,topBorder=parseFloat(css.borderTopWidth)||0,inset=parseFloat(css.getPropertyValue('--segment-inset'))||3,first=group.buttons[0];
+    const bounds=element.getBoundingClientRect();group.barWidth=element.clientWidth;group.height=Math.max(1,first.offsetHeight-inset*2);group.width=Math.max(1,first.offsetWidth-inset*2);
+    group.centers=group.buttons.map(button=>{const r=button.getBoundingClientRect();return r.left-bounds.left-leftBorder+r.width/2});
+    const firstBounds=first.getBoundingClientRect();group.top=firstBounds.top-bounds.top-topBorder+(firstBounds.height-group.height)/2;
+    group.lens.style.cssText=`position:absolute;left:0;top:${group.top}px;width:${group.width}px;height:${group.height}px;pointer-events:none`;
+    const filter=refraction(group.width,group.height,group.height/2,6);if(filter)group.lens.style.setProperty('--lens-filter',filter);
+  }
   const selected=group.buttons.findIndex(button=>button.classList.contains('active')||button.getAttribute('aria-pressed')==='true'),index=selected<0?0:selected;
   group.target=group.centers[index];
   if(changed&&oldWidth>0&&wasPresent){group.x*=group.barWidth/oldWidth;group.velocity*=group.barWidth/oldWidth}
@@ -142,16 +151,38 @@ function up(id){
   if(wasRange&&!isRangeInteracting())window.dispatchEvent(new CustomEvent('listenly-seek-release'));
 }
 function releaseAll(){Array.from(pointers.keys()).forEach(up)}
-function changed(){if(isReduced()){syncGlass(mountedRoot||document);return}if(!scheduled)scheduled=requestAnimationFrame(()=>{scheduled=0;syncGlass(mountedRoot||document)})}
+function flushChanges(){
+  scheduled=0;const roots=Array.from(pendingRoots);pendingRoots.clear();roots.forEach(root=>{if(root.isConnected)syncGlass(root)});
+  if(pendingCleanup){pendingCleanup=false;groups.forEach(group=>{if(group.element&&!group.element.isConnected){if(!group.detachedAt)group.detachedAt=performance.now();group.moving=false}})}
+}
+function queueRoot(root){
+  if(!root||root.nodeType!==1||root.closest('.glass-optics,.nav-optics'))return;
+  for(const pending of pendingRoots){if(pending.contains(root))return;if(root.contains(pending))pendingRoots.delete(pending)}
+  pendingRoots.add(root);
+}
+function changed(records){
+  records.forEach(record=>{
+    if(record.type==='attributes'){
+      const segment=record.target.closest(SEGMENTS);if(segment)queueRoot(segment);else if(record.target.matches(STATIC_LENSES))queueRoot(record.target);
+    }else{
+      record.addedNodes.forEach(node=>{if(node.nodeType===1&&!node.closest('.glass-optics,.nav-optics')&&(node.matches(SCANNABLE)||node.querySelector(SCANNABLE)))queueRoot(node)});
+      if(Array.from(record.removedNodes).some(node=>node.nodeType===1))pendingCleanup=true;
+    }
+  });
+  // Text-only clock updates and generated SVG maps do not change controls.
+  if(!pendingRoots.size&&!pendingCleanup)return;
+  if(isReduced())flushChanges();else if(!scheduled)scheduled=requestAnimationFrame(flushChanges);
+}
 
-export function syncGlass(root=mountedRoot||document){
-  const present=new Set();all(root,SEGMENTS).forEach(element=>{const key=groupKey(element);present.add(key);let group=groups.get(key);if(!group){group=createGroup(key);groups.set(key,group)}syncGroup(group,element)});
+export function syncGlass(root=mountedRoot||document,forceMeasure=false){
+  const present=new Set();all(root,SEGMENTS).forEach(element=>{const key=groupKey(element);present.add(key);let group=groups.get(key);if(!group){group=createGroup(key);groups.set(key,group)}syncGroup(group,element,forceMeasure)});
   groups.forEach((group,key)=>{if(!present.has(key)&&group.element&&!group.element.isConnected){if(!group.detachedAt)group.detachedAt=performance.now();group.moving=false}});
   const targets=all(root,PRESSES),fresh=new Map();targets.forEach(element=>{if(!element.hasAttribute('data-glass-press'))element.setAttribute('data-glass-press','');const key=pressKey(element);if(key&&!fresh.has(key))fresh.set(key,element)});
   // A mode/display click replaces its panel after pointerup. Transfer the
   // released spring to the corresponding new button rather than snapping it.
   presses.forEach((state,old)=>{if(old.isConnected||!state.key)return;const replacement=fresh.get(state.key);if(!replacement||presses.has(replacement))return;presses.delete(old);state.element=replacement;presses.set(replacement,state);paintPress(state)});
-  all(root,STATIC_LENSES).forEach(element=>ensureLens(element));
+  // Read geometry together before adding filters or writing their styles.
+  all(root,STATIC_LENSES).map(element=>measureLens(element)).forEach(applyLens);
 }
 
 export function mountGlass(root=document){
@@ -168,7 +199,7 @@ export function mountGlass(root=document){
   }
   listen(window,'keydown',event=>{if(event.repeat||!['Enter',' '].includes(event.key))return;down(event,`key-${event.key}`)},true);
   listen(window,'keyup',event=>up(`key-${event.key}`),true);listen(window,'blur',releaseAll);listen(document,'visibilitychange',()=>{if(document.hidden)releaseAll()});
-  listen(window,'resize',()=>{syncGlass(mountedRoot||document)});
+  listen(window,'resize',()=>{syncGlass(mountedRoot||document,true)});
   const reduce=()=>{releaseAll();syncGlass(mountedRoot||document);presses.forEach(state=>{state.position=state.target;state.velocity=0;state.moving=false;paintPress(state)})};
   if(reduced.addEventListener)listen(reduced,'change',reduce);else if(reduced.addListener){reduced.addListener(reduce);removers.push(()=>reduced.removeListener(reduce))}
   observer=new MutationObserver(changed);observer.observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['class','aria-pressed','aria-checked','data-current']});syncGlass(root);
@@ -178,4 +209,5 @@ export function disposeGlass(){
   if(observer)observer.disconnect();observer=null;removers.splice(0).forEach(remove=>remove());if(scheduled)cancelAnimationFrame(scheduled);if(motionFrame)cancelAnimationFrame(motionFrame);scheduled=0;motionFrame=0;motionTime=0;mountedRoot=null;
   groups.forEach(group=>{if(group.lens)group.lens.remove()});presses.forEach(state=>{state.element.style.removeProperty('--press-scale');state.element.style.removeProperty('--thumb-scale');const shell=state.element.closest('.seek-shell');if(shell)shell.style.removeProperty('--thumb-scale')});
   groups.clear();presses.clear();pointers.clear();filters.clear();if(optics)optics.remove();optics=null;defs=null;
+  pendingRoots.clear();pendingCleanup=false;
 }

@@ -437,6 +437,15 @@ body.is-practicing,.app-shell.practice-shell,.transcript-card,.quiz-card,.result
 .flow-lens::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(118deg,var(--lens-glint),transparent 32%,transparent 74%,var(--lens-glint-end))}
 [data-flow-copy],[data-lens-copy]{display:block;min-width:0;transform:scale(var(--lens-scale,1));transform-origin:left center;font-weight:var(--lens-weight,400);font-variation-settings:'wght' var(--lens-weight,400);color:var(--ink)}
 [data-lens-copy]{transform-origin:center}
+/* Horizontal labels crossfade two fixed glyph metrics. The regular layer is
+   the only accessible text; the generated semibold layer stays decorative. */
+.theme-control button,.mode-control button,.display-controls button,.nav-item,.nav-item.active,.nav-content,[data-lens-copy]{font-weight:400!important;font-variation-settings:'wght' 400!important}
+[data-lens-copy],.nav-label{position:relative;isolation:isolate}
+.lens-copy-base{display:block;font-weight:400!important;font-variation-settings:'wght' 400!important;opacity:calc(1 - var(--lens-emphasis,0));will-change:opacity}
+.lens-copy-emphasis{position:absolute;inset:0;display:block;font-weight:600!important;font-variation-settings:'wght' 600!important;opacity:var(--lens-emphasis,0);will-change:opacity;pointer-events:none;white-space:nowrap}
+.lens-copy-emphasis::before{content:attr(data-label);display:block}
+.nav-label{text-align:center}
+
 .mode-control button,.theme-control button,.display-controls button{color:var(--ink)}
 .mode-control button.active,.theme-control button.active,.display-controls button.active{font-weight:inherit;color:var(--ink)}
 .sentence{background:transparent!important;box-shadow:none!important;padding-left:10px;padding-right:12px}
@@ -471,4 +480,27 @@ body.is-practicing,.app-shell.practice-shell,.transcript-card,.quiz-card,.result
 .nav-content{color:var(--ink);font-variation-settings:'wght' var(--lens-weight,400)}
 .busy{background:linear-gradient(155deg,var(--frost-top),var(--frost-bottom));backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
 @supports(color:color-mix(in srgb,#000,#fff)){[data-flow-copy],[data-lens-copy],.nav-content{color:color-mix(in srgb,var(--ink),var(--lens-ink) calc(var(--lens-emphasis,0)*100%))}}
-@media(prefers-reduced-transparency:reduce),(forced-colors:active){.primary-btn,.option,.focus-card,.statistics,.activity-card,.settings-card,.flow-lens,.main-panel{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}.glass-symbol{background:currentColor}.wallpaper-wash{background:var(--paper)}}
+/* Keep the optical highlights stable while the browser interpolates the tint.
+   Animating inherited color tokens in JavaScript invalidates every glass layer. */
+.bottom-nav,.mode-control,.theme-control,.display-controls{background:linear-gradient(155deg,rgba(255,255,255,.10),transparent) var(--rail-bottom)}
+.nav-lens,.glass-segment-lens,.flow-lens,.transport-pill::before,.speed-btn::before,.speed-btn:active::before,.big-play::before,.row-play::before{background:linear-gradient(155deg,rgba(255,255,255,.19),rgba(255,255,255,.015)) var(--lens-bottom)}
+.nav-lens::after,.glass-segment-lens::after,.flow-lens::after{background:linear-gradient(120deg,rgba(255,255,255,.12),transparent 35%,transparent 68%,rgba(255,255,255,.025))}
+.focus-card,.statistics,.activity-card,.settings-card,.busy,.option,.import-choice,.primary-btn,.primary-btn.light,.text-btn,.skip-btn,.icon-btn:not(.bookmark),.library-search{background:linear-gradient(155deg,rgba(255,255,255,.09),transparent) var(--frost-bottom)}
+.option.selected:not(.correct):not(.wrong),.speed-option[aria-checked=true],.filter-option[aria-checked=true]{background:transparent}
+.option.correct{background:var(--correct-bg)}.option.wrong{background:var(--wrong-bg)}
+.speed-popover,.dialog{background:linear-gradient(155deg,rgba(255,255,255,.12),transparent) var(--sheet-bottom)}
+.seek-track{background:linear-gradient(180deg,rgba(255,255,255,.10),transparent) var(--track-bottom)}
+.seek-handle{background:linear-gradient(145deg,rgba(255,255,255,.23),rgba(255,255,255,.025)) var(--thumb-bottom)}
+.glass-symbol{background:linear-gradient(145deg,rgba(255,255,255,.46),transparent) var(--symbol-bottom)}
+.glass-symbol::after{background:linear-gradient(130deg,rgba(255,255,255,.58),transparent 23%,transparent 67%,rgba(255,255,255,.58))}
+.calendar-day[data-level="0"]{background:rgba(128,128,128,.18)}
+.theme-control,.mode-control,.display-controls,.bottom-nav{contain:layout}
+.glass-optics,.glass-optics *,.nav-optics,.nav-optics *{color:#000;stroke:none;fill:none;transition:none!important}
+:root[data-theme-transition=true] body,:root[data-theme-transition=true] button,:root[data-theme-transition=true] input,:root[data-theme-transition=true] [data-flow-copy],:root[data-theme-transition=true] [data-lens-copy],:root[data-theme-transition=true] .nav-content,:root[data-theme-transition=true] .timestamp,:root[data-theme-transition=true] .sentence .zh,:root[data-theme-transition=true] .card-kicker,:root[data-theme-transition=true] .stat strong,:root[data-theme-transition=true] .stat span,:root[data-theme-transition=true] .player-progress,:root[data-theme-transition=true] .calendar-months,:root[data-theme-transition=true] .calendar-weekdays,:root[data-theme-transition=true] .source-note{transition:color 300ms cubic-bezier(.4,0,.2,1),background-color 300ms cubic-bezier(.4,0,.2,1),border-color 300ms cubic-bezier(.4,0,.2,1)}
+:root[data-theme-transition=true] #wallpaper-scene,:root[data-theme-transition=true] .wallpaper-wash,:root[data-theme-transition=true] .focus-card,:root[data-theme-transition=true] .statistics,:root[data-theme-transition=true] .activity-card,:root[data-theme-transition=true] .settings-card,:root[data-theme-transition=true] .main-panel,:root[data-theme-transition=true] .bottom-nav,:root[data-theme-transition=true] .mode-control,:root[data-theme-transition=true] .theme-control,:root[data-theme-transition=true] .display-controls,:root[data-theme-transition=true] .nav-lens,:root[data-theme-transition=true] .glass-segment-lens,:root[data-theme-transition=true] .flow-lens,:root[data-theme-transition=true] .transport-pill::before,:root[data-theme-transition=true] .speed-btn::before,:root[data-theme-transition=true] .big-play::before,:root[data-theme-transition=true] .row-play::before,:root[data-theme-transition=true] .seek-track,:root[data-theme-transition=true] .seek-handle,:root[data-theme-transition=true] .seek-fill,:root[data-theme-transition=true] .glass-symbol,:root[data-theme-transition=true] .dialog,:root[data-theme-transition=true] .dialog-shade,:root[data-theme-transition=true] .speed-popover,:root[data-theme-transition=true] .busy{transition:background-color 300ms cubic-bezier(.4,0,.2,1),border-color 300ms cubic-bezier(.4,0,.2,1),box-shadow 300ms cubic-bezier(.4,0,.2,1)}
+:root[data-theme-transition=true] .calendar-day:not([data-level="0"]){transition:background-color 300ms cubic-bezier(.4,0,.2,1)}
+:root[data-theme-transition=true] .wallpaper-night{transition:opacity 300ms cubic-bezier(.4,0,.2,1);will-change:opacity}
+:root[data-theme-transition=true] .row-play::before{transition-property:color,background-color,border-color,box-shadow,opacity;transition-duration:300ms,300ms,300ms,300ms,200ms}
+:root[data-theme-transition=true] .history-row{transition-property:color,background-color,border-color,box-shadow,opacity;transition-duration:300ms,300ms,300ms,300ms,120ms}
+:root[data-theme-transition=true] #toast{transition-property:color,background-color,opacity,transform;transition-duration:300ms,300ms,150ms,150ms}
+@media(prefers-reduced-transparency:reduce),(forced-colors:active){.primary-btn,.option,.focus-card,.statistics,.activity-card,.settings-card,.flow-lens,.main-panel,.bottom-nav,.nav-lens,.glass-segment-lens,.transport-pill::before,.speed-btn::before,.big-play::before,.row-play::before,.speed-popover,.dialog{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}.glass-symbol{background:currentColor}.wallpaper-wash{background:var(--paper)}}

@@ -5,6 +5,7 @@ import {advanceSpring,advanceViscousStrain,ensureLens} from './glass.js';
 
 const lists=new Map();
 const measuredElements=new Map();
+const emphasisValues=new WeakMap(),pendingLists=new Set(),pendingRoots=new Set();
 let mountedRoot=null,observer=null,layoutObserver=null,reduced=null,scheduled=0,frame=0,lastTime=0,ticking=false;
 const removers=[];
 
@@ -35,8 +36,9 @@ function watchLayout(state){
   state.observed.forEach(element=>{if(!next.has(element)){layoutObserver.unobserve(element);measuredElements.delete(element)}});
   next.forEach(element=>{
     if(!state.observed.has(element))layoutObserver.observe(element);
-    measuredElements.set(element,{state,width:element.offsetWidth,height:element.offsetHeight});
   });state.observed=next;
+  measuredElements.set(state.element,{state,width:state.listWidth,height:state.listHeight});
+  state.metrics.forEach(metric=>measuredElements.set(metric.item,{state,width:metric.width,height:metric.height}));
 }
 function geometryChanged(state){
   return state.metrics.some(metric=>{
@@ -45,8 +47,14 @@ function geometryChanged(state){
     return ['left','top','width','height'].some(property=>Math.abs(bounds[property]-metric[property])>.5);
   });
 }
-function scheduleSync(){if(!scheduled)scheduled=requestAnimationFrame(()=>{scheduled=0;if(mountedRoot)syncFlowLenses(mountedRoot)})}
+function flushSync(){
+  scheduled=0;const roots=Array.from(pendingRoots),states=Array.from(pendingLists);pendingRoots.clear();pendingLists.clear();
+  roots.forEach(root=>{if(root.isConnected)syncFlowLenses(root)});states.forEach(state=>{if(state.element?.isConnected)syncList(state,state.element,false)});
+  cleanDetached();
+}
+function scheduleSync(state){if(state)pendingLists.add(state);if(!scheduled)scheduled=requestAnimationFrame(flushSync)}
 function emphasis(item,value){
+  value=Math.round(value*10000)/10000;if(emphasisValues.get(item)===value)return;emphasisValues.set(item,value);
   item.style.setProperty('--lens-emphasis',String(value));
   item.style.setProperty('--lens-scale',String(1+value*.025));
   item.style.setProperty('--lens-weight',String(400+value*180));
@@ -54,12 +62,12 @@ function emphasis(item,value){
 }
 function paint(state){
   if(!state.lens||!state.element.isConnected)return;
-  if(!state.target){state.lens.style.opacity='0';state.metrics.forEach(metric=>emphasis(metric.item,0));return}
-  const strength=Math.min(1,Math.abs(state.strain)),stretch=1+strength*.105,squash=1-strength*.045,width=Math.max(1,Math.min(state.element.clientWidth,state.width)),height=Math.max(1,state.height),extent=(height*stretch+width*Math.abs(Math.tan(state.strain*.65*Math.PI/180)))/2;
-  const x=Math.max(width/2,Math.min(state.element.clientWidth-width/2,state.x)),y=Math.max(extent,Math.min(Math.max(extent,state.contentHeight-extent),state.y));
-  state.lens.style.width=`${width}px`;state.lens.style.height=`${height}px`;
+  if(!state.target){if(state.visible!==false){state.lens.style.opacity='0';state.visible=false}state.metrics.forEach(metric=>emphasis(metric.item,0));return}
+  const strength=Math.min(1,Math.abs(state.strain)),stretch=1+strength*.105,squash=1-strength*.045,width=Math.max(1,Math.min(state.containerWidth,state.width)),height=Math.max(1,state.height),extent=(height*stretch+width*Math.abs(Math.tan(state.strain*.65*Math.PI/180)))/2;
+  const x=Math.max(width/2,Math.min(state.containerWidth-width/2,state.x)),y=Math.max(extent,Math.min(Math.max(extent,state.contentHeight-extent),state.y));
+  if(state.paintedWidth!==width){state.lens.style.width=`${width}px`;state.paintedWidth=width}if(state.paintedHeight!==height){state.lens.style.height=`${height}px`;state.paintedHeight=height}
   state.lens.style.transform=`translate3d(${x-width/2}px,${y-height/2}px,0) scale(${squash},${stretch}) skewY(${state.strain*.65}deg)`;
-  state.lens.style.opacity='1';state.element.style.setProperty('--flow-velocity',String(strength));
+  if(state.visible!==true){state.lens.style.opacity='1';state.visible=true}state.element.style.setProperty('--flow-velocity',String(strength));
   state.metrics.forEach(metric=>emphasis(metric.item,flowEmphasis(y,height,metric.top+metric.height/2,metric.height)));
 }
 function mapSettled(state){
@@ -91,12 +99,13 @@ function syncList(state,element,force){
   const changed=state.element!==element,missingLens=!state.lens||state.lens.parentNode!==element,items=itemsFor(element),active=items.find(selected)||null;
   const changedItems=items.length!==state.items.length||items.some((item,index)=>item!==state.items[index]);
   if(!changed&&!missingLens&&!changedItems&&!force&&!state.dirty&&active===state.active)return;
-  state.element=element;state.items=items;state.active=active;state.dirty=false;
-  if(changed||missingLens){state.lens=document.createElement('span');state.lens.className='flow-lens';state.lens.setAttribute('aria-hidden','true');element.insertBefore(state.lens,element.firstChild);state.mapWidth=state.mapHeight=-1}
+  state.element=element;state.items=items;state.active=active;state.dirty=false;state.itemsDirty=false;
+  if(changed||missingLens){state.lens=document.createElement('span');state.lens.className='flow-lens';state.lens.setAttribute('aria-hidden','true');element.insertBefore(state.lens,element.firstChild);state.mapWidth=state.mapHeight=-1;state.paintedWidth=state.paintedHeight=state.visible=null}
   const css=getComputedStyle(element),insetX=parseFloat(css.getPropertyValue('--flow-inset-x'))||0,insetY=parseFloat(css.getPropertyValue('--flow-inset-y'))||0;
   state.radius=parseFloat(css.getPropertyValue('--flow-lens-radius'))||18;
   state.metrics=items.map(item=>({item,...layoutBounds(item,element)}));
   state.contentHeight=state.metrics.reduce((bottom,metric)=>Math.max(bottom,metric.top+metric.height),0);
+  state.containerWidth=element.clientWidth;state.listWidth=element.offsetWidth;state.listHeight=element.offsetHeight;
   // Cache sizes before paint changes the variable font weight. Observing every
   // row also catches an earlier sentence shrinking and moving the active one.
   watchLayout(state);
@@ -106,7 +115,7 @@ function syncList(state,element,force){
   state.target={x:metric.left+metric.width/2,y:metric.top+metric.height/2,width,height};
   if(!state.initialized||isReduced()){
     state.initialized=true;snap(state);
-    if(!layoutObserver&&geometryChanged(state)){state.dirty=true;scheduleSync()}
+    if(!layoutObserver&&geometryChanged(state)){state.dirty=true;scheduleSync(state)}
   }else{
     // A replacement DOM keeps both position and momentum for this same list.
     // Different article lists use different keys and start on their own row.
@@ -114,40 +123,46 @@ function syncList(state,element,force){
   }
 }
 
+function cleanDetached(){
+  lists.forEach(state=>{
+    if(state.element&&!state.element.isConnected){
+      unwatchLayout(state);state.moving=false;state.element=null;state.lens=null;state.items=[];state.metrics=[];state.active=null;
+    }
+  });
+}
 export function syncFlowLenses(root=mountedRoot||document,force=false){
   all(root,'[data-flow-list]').forEach(element=>{
     const key=keyFor(element);let state=lists.get(key);
     if(!state){state={key,element:null,lens:null,items:[],metrics:[],active:null,target:null,x:0,y:0,width:1,height:1,vx:0,vy:0,vw:0,vh:0,strain:0,strainVelocity:0,initialized:false,moving:false,dirty:false,mapWidth:-1,mapHeight:-1};lists.set(key,state)}
     syncList(state,element,force);
   });
-  lists.forEach(state=>{
-    if(state.element&&!state.element.isConnected){
-      // Retain only the small numeric spring state for a future redraw. Keeping
-      // detached reader nodes here would otherwise retain whole old articles.
-      unwatchLayout(state);
-      state.moving=false;state.element=null;state.lens=null;state.items=[];state.metrics=[];state.active=null;
-    }
-  });
+  cleanDetached();
 }
 
 export function mountFlowLenses(root=document){
   if(observer){syncFlowLenses(root);return}
   mountedRoot=root;reduced=matchMedia('(prefers-reduced-motion: reduce)');
   if(typeof ResizeObserver==='function')layoutObserver=new ResizeObserver(entries=>{
-    let changed=false;
-    entries.forEach(entry=>{const measured=measuredElements.get(entry.target);if(!measured)return;const width=entry.target.offsetWidth,height=entry.target.offsetHeight;if(width!==measured.width||height!==measured.height){measured.width=width;measured.height=height;measured.state.dirty=true;changed=true}});
-    if(changed)scheduleSync();
+    entries.forEach(entry=>{const measured=measuredElements.get(entry.target);if(!measured)return;const width=entry.target.offsetWidth,height=entry.target.offsetHeight;if(width!==measured.width||height!==measured.height){measured.width=width;measured.height=height;measured.state.dirty=true;scheduleSync(measured.state)}});
   });
   const changed=records=>{
-    records.forEach(record=>lists.forEach(state=>{if(state.element&&(record.target===state.element||state.element.contains(record.target))&&record.type==='childList')state.dirty=true}));
-    if(!scheduled)scheduled=requestAnimationFrame(()=>{scheduled=0;syncFlowLenses(mountedRoot)});
+    let cleanup=false;
+    records.forEach(record=>{
+      const target=record.target.nodeType===1?record.target:record.target.parentElement,list=target?.closest('[data-flow-list]'),state=list&&lists.get(keyFor(list));
+      if(record.type==='attributes'){if(state&&state.element===list)scheduleSync(state);return}
+      const generated=node=>node.nodeType===1&&(node.classList.contains('flow-lens')||node.closest('.glass-optics,.nav-optics'));
+      if(state&&state.element===list&&[...record.addedNodes,...record.removedNodes].some(node=>!generated(node))){state.dirty=true;state.itemsDirty=true;scheduleSync(state)}
+      record.addedNodes.forEach(node=>{if(node.nodeType!==1||generated(node))return;if(node.matches('[data-flow-list]')||node.querySelector('[data-flow-list]')){pendingRoots.add(node);scheduleSync()}});
+      if(Array.from(record.removedNodes).some(node=>node.nodeType===1&&!generated(node)))cleanup=true;
+    });
+    if(cleanup)scheduleSync();
   };
   observer=new MutationObserver(changed);observer.observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['class','aria-current','aria-checked','data-selected']});
   const resize=()=>syncFlowLenses(mountedRoot,true),reduce=()=>{syncFlowLenses(mountedRoot,true);lists.forEach(state=>{if(state.target&&isReduced())snap(state)})};
   window.addEventListener('resize',resize);removers.push(()=>window.removeEventListener('resize',resize));
   if(reduced.addEventListener){reduced.addEventListener('change',reduce);removers.push(()=>reduced.removeEventListener('change',reduce))}else if(reduced.addListener){reduced.addListener(reduce);removers.push(()=>reduced.removeListener(reduce))}
   // Image and font loads can change sentence wrapping without a window resize.
-  const relayout=()=>{if(!scheduled)scheduled=requestAnimationFrame(()=>{scheduled=0;syncFlowLenses(mountedRoot,true)})};
+  const relayout=()=>{lists.forEach(state=>{if(state.element?.isConnected){state.dirty=true;scheduleSync(state)}})};
   root.addEventListener('load',relayout,true);removers.push(()=>root.removeEventListener('load',relayout,true));
   if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{if(observer)relayout()});
   syncFlowLenses(root);
@@ -157,4 +172,5 @@ export function disposeFlowLenses(){
   if(observer)observer.disconnect();observer=null;if(layoutObserver)layoutObserver.disconnect();layoutObserver=null;measuredElements.clear();removers.splice(0).forEach(remove=>remove());if(scheduled)cancelAnimationFrame(scheduled);if(frame)cancelAnimationFrame(frame);scheduled=frame=lastTime=0;ticking=false;
   lists.forEach(state=>{if(state.lens)state.lens.remove();state.items.forEach(item=>['--lens-emphasis','--lens-scale','--lens-weight','--lens-contrast'].forEach(property=>item.style.removeProperty(property)))});
   lists.clear();mountedRoot=null;reduced=null;
+  pendingLists.clear();pendingRoots.clear();
 }

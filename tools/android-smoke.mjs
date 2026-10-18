@@ -102,6 +102,14 @@ try{
  await rpc('Page.addScriptToEvaluateOnNewDocument',{source:diagnosticScript});
  await evaluate(diagnosticScript);
  const poll=async expression=>{for(let i=0;i<30;i++){const value=await evaluate(expression);if(value)return value;await wait(500)}throw new Error(`UI readiness failed: ${expression}`)};
+ const nativeInsetsExpression='["top","right","bottom","left"].reduce(function(insets,edge){insets[edge]=document.documentElement.style.getPropertyValue("--safe-"+edge).trim();return insets},{})';
+ const waitNativeLayout=async(expected,stage)=>{
+  // Native onPageFinished injects insets after the first app DOM can exist.
+  // Inline values distinguish that delivery from the stylesheet's 0px defaults.
+  // Preserve the known window geometry through reload without guessing a delay.
+  const ready=await poll(`(async()=>{if(!document.querySelector('.focus-card'))return null;await document.fonts.ready;var insets=${nativeInsetsExpression},expected=${JSON.stringify(expected)};if(!Object.values(insets).every(Boolean)||expected&&Object.keys(expected).some(function(edge){return insets[edge]!==expected[edge]}))return null;return {insets:insets,fonts:document.fonts.status,readyState:document.readyState}})()`);
+  (result.insetReadiness??=[]).push({stage,...ready});return ready.insets;
+ };
  const tapControl=async selector=>{
   if(selector.includes('[data-action=nav]')&&selector.includes('[data-route=library]')&&!await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`)){await tapControl('[data-action=nav][data-route=home]');await poll('document.querySelector(".focus-card")')}
   // A DOM update can precede the WebView compositor's native hit-test frame.
@@ -115,6 +123,7 @@ try{
   return tap;
  };
  result.home=await poll('document.querySelector(".focus-card") && document.body.innerText');
+ result.nativeSafeInsets=await waitNativeLayout(null,'initial-home');
  assert.ok(await evaluate('!!document.querySelector(".focus-card [data-action=open],.focus-card [data-action=import]")'),'Homepage has an actionable listening material entry');
  result.fontState=await evaluate('(async()=>{await document.fonts.ready;return {body:getComputedStyle(document.body).fontFamily,control:getComputedStyle(document.querySelector(".focus-play")).fontFamily,loaded:[...document.fonts].filter(face=>face.status==="loaded").map(face=>({family:face.family,weight:face.weight,status:face.status}))}})()');
  assert.match(result.fontState.body,/Inter/,'Native interface typography uses the bundled Inter family');
@@ -140,8 +149,10 @@ try{
  result.profileAppearance=await evaluate('({background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color,paused:document.querySelector("#audio").paused,error:document.querySelector("#audio").error})');
  assert.equal(result.profileAppearance.background,'rgb(0, 0, 0)','Night mode uses the requested pure-black background on profile');
  assert.ok(result.profileAppearance.paused&&!result.profileAppearance.error,'Changing profile appearance keeps the naturally paused audio error-free');
+ const appearanceInsets=await evaluate(nativeInsetsExpression);
  await evaluate('window.__appearanceReloadProbe=true');await captureDiagnostics('before-appearance-reload');await rpc('Page.reload');
  await poll('!window.__appearanceReloadProbe&&document.querySelector(".focus-card")');
+ await waitNativeLayout(appearanceInsets,'appearance-reload');
  assert.equal(await evaluate('document.documentElement.dataset.theme'),'dark','Night mode survives a page reload');
  assert.equal(await evaluate('document.querySelectorAll(".theme-control button,[data-action=import]").length'),0,'Reloaded home keeps appearance and import controls in profile');
  await tapControl('.focus-card [data-action=home-play]');
@@ -254,24 +265,19 @@ try{
  assert.equal(result.playback.paused,false,'Native WebView audio plays after a touch');
  assert.ok(result.playback.time>0,'Native audio playback progresses');
  result.speedBefore=await evaluate('document.querySelector("#audio").playbackRate');
+ const nativeRates=[1,1.25,1.5,1.75,2];assert.ok(nativeRates.includes(result.speedBefore),'Native persisted speed belongs to the direct cycle');
  await evaluate('window.__speedAudio=document.querySelector("#audio");window.__speedReader=document.querySelector(".main-panel")');
- result.speedMenuTap=await tapControl('[data-action=speed]');
- await poll('document.querySelector(".speed-popover")&&document.querySelector("[data-action=speed]").getAttribute("aria-expanded")==="true"');
- assert.equal(await evaluate('document.querySelector("#audio").playbackRate'),result.speedBefore,'Opening the native speed menu keeps the current rate');
- assert.deepEqual(await evaluate('[...document.querySelectorAll(".speed-popover [role=menuitemradio]")].map(b=>Number(b.dataset.speed))'),[.75,1,1.25,1.5],'Native popup has explicit playback rate choices');
- result.speedChoiceTap=await tapControl('.speed-popover [data-action=set-speed][data-speed="1.25"]');
- result.speedPlayback=await poll(`(()=>{var a=document.querySelector("#audio");return !document.querySelector(".speed-popover")&&!a.paused&&a.playbackRate===1.25&&!a.error&&a.currentTime>${result.playback.time}+.1?{time:a.currentTime,rate:a.playbackRate}:null})()`);
- assert.ok(result.speedPlayback.time>result.playback.time,'Playback continues while the native menu changes speed');
- assert.ok(await evaluate('window.__speedAudio===document.querySelector("#audio")&&window.__speedReader===document.querySelector(".main-panel")'),'Native speed adjustment retains the existing audio and reader');
- assert.equal(await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).speed'),1.25,'Native speed selection is saved');
- await tapControl('[data-action=speed]');
- run(['shell','input','keyevent','4']);
- await poll('!document.querySelector(".speed-popover")&&document.querySelector(".practice-header")');
- assert.equal(await evaluate('document.querySelector("#audio").playbackRate'),1.25,'Android back dismisses the popup without changing rate or leaving the reader');
- await tapControl('[data-action=speed]');
- await poll('document.querySelector(".speed-popover")&&document.querySelector("[data-action=speed]").getAttribute("aria-expanded")==="true"');
- await tapControl(`.speed-popover [data-action=set-speed][data-speed="${result.speedBefore}"]`);
- await poll(`!document.querySelector(".speed-popover")&&document.querySelector("#audio").playbackRate===${result.speedBefore}`);
+ result.speedCycle=[];let nativeRate=result.speedBefore;
+ for(let step=0;step<nativeRates.length;step++){
+  const beforeRateTap=await evaluate('({time:document.querySelector("#audio").currentTime,src:document.querySelector("#audio").currentSrc})');
+  nativeRate=nativeRates[(nativeRates.indexOf(nativeRate)+1)%nativeRates.length];const touch=await tapControl('[data-action=speed]');
+  const afterRateTap=await poll(`(()=>{var a=document.querySelector('#audio'),b=document.querySelector('[data-action=speed]');return !a.paused&&!a.error&&a.playbackRate===${nativeRate}&&!document.querySelector('.speed-popover:not(.filter-popover)')?{time:a.currentTime,src:a.currentSrc,rate:a.playbackRate,label:b.textContent.trim(),popup:b.getAttribute('aria-haspopup'),saved:JSON.parse(localStorage.getItem('listenly.state.v1')).speed}:null})()`);
+  assert.equal(afterRateTap.saved,nativeRate,'Native rate cycling persists immediately');assert.equal(afterRateTap.src,beforeRateTap.src,'Native rate cycling keeps the same recording');assert.ok(afterRateTap.time>=beforeRateTap.time-.05,'Native rate cycling does not move playback backwards');assert.notEqual(afterRateTap.popup,'menu','The direct native speed control does not announce a popup');assert.match(afterRateTap.label,new RegExp(`^${String(nativeRate).replace('.','\\.')}\\s*×$`));
+  result.speedCycle.push({before:beforeRateTap,touch,after:afterRateTap});
+ }
+ assert.equal(nativeRate,result.speedBefore,'Five native taps return to the initial rate');
+ result.speedPlayback=await poll(`(()=>{var a=document.querySelector('#audio');return !a.paused&&a.playbackRate===${result.speedBefore}&&!a.error&&a.currentTime>${result.playback.time}+.1?{time:a.currentTime,rate:a.playbackRate}:null})()`);
+ assert.ok(await evaluate('window.__speedAudio===document.querySelector("#audio")&&window.__speedReader===document.querySelector(".main-panel")'),'Native speed cycling retains the existing audio and reader');
  if(publicDemo){
   await tapPlay();
   result.pause=await poll('(()=>{var a=document.querySelector("#audio");return a.paused?{paused:a.paused,time:a.currentTime}:null})()');
@@ -384,9 +390,11 @@ try{
  await evaluate('document.querySelector("[data-action=view-result]").scrollIntoView({block:"center"})');await tapControl('[data-action=view-result]');
  await poll('document.querySelector(".result-card")');
  await evaluate('document.querySelector("[data-action=nav][data-route=home]").click()');
+ const answerReloadInsets=await evaluate(nativeInsetsExpression);
  await evaluate('window.__listenlyReloadProbe=true');
  await captureDiagnostics('before-answer-reload');await rpc('Page.reload');
  await poll('!window.__listenlyReloadProbe && document.querySelector(".focus-card")');
+ await waitNativeLayout(answerReloadInsets,'answer-reload');
  result.restoredAnswers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
  assert.deepEqual(result.restoredAnswers,result.answer,'Answers survive WebView page reload');
  const savedHomeExpression='(()=>{var s=JSON.parse(localStorage.getItem("listenly.state.v1"));return {selectedPaper:s.selectedPaper,homeFocus:s.homeFocus||null}})()';

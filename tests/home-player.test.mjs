@@ -5,6 +5,7 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
 import {openLibraryArticle,clickAppControl} from './library-navigation.mjs';
+import {cycleSpeedTo} from './playback-speed.mjs';
 import {installReplayEndIsolation,replayIsolationDescription} from './replay-isolation.mjs';
 
 let playwright;
@@ -95,7 +96,7 @@ try{
  await click('.home-playback [data-action="seek-relative"][data-seconds="5"]');await timeReached(titleTarget+5);assert.ok((await audio(page)).src.endsWith('/library.wav'));assert.equal((await audio(page)).paused,true);await click('.home-playback [data-action="seek-relative"][data-seconds="-5"]');await timeReached(titleTarget);await assertHomeTime(titleTarget,secondPlaying.duration);
  pass('previewing another article cannot overwrite pinned progress; skip controls prepare the pinned source paused',{previewAudio,titleTarget});
 
- await click('.home-playback [data-action="speed"]');await click('[data-action="set-speed"][data-speed="1.25"]');assert.equal((await audio(page)).rate,1.25);assert.equal((await audio(page)).paused,true);result.layouts=[];for(const theme of ['light','dark'])for(const viewport of [{width:320,height:740},{width:393,height:873},{width:430,height:932}])result.layouts.push(await layout(theme,viewport));await page.screenshot({path:path.join(output,'home-dark.png'),fullPage:true});await page.setViewportSize({width:393,height:873});await click('.home-playback [data-action="speed"]');await click('[data-action="set-speed"][data-speed="1"]');assert.equal((await audio(page)).rate,1);
+ await cycleSpeedTo(page,1.25,'.home-playback [data-action="speed"]');assert.equal((await audio(page)).rate,1.25);assert.equal((await audio(page)).paused,true);result.layouts=[];for(const theme of ['light','dark'])for(const viewport of [{width:320,height:740},{width:393,height:873},{width:430,height:932}])result.layouts.push(await layout(theme,viewport));await page.screenshot({path:path.join(output,'home-dark.png'),fullPage:true});await page.setViewportSize({width:393,height:873});await cycleSpeedTo(page,1,'.home-playback [data-action="speed"]');assert.equal((await audio(page)).rate,1);
  pass('home rate controls and six theme/phone layouts stay compact and usable',{layouts:result.layouts.length});
 
  const fixture=await makeClipFixture();await click('[data-action="nav"][data-route="library"]');await page.locator('#folder-input').setInputFiles(fixture);await page.locator('[data-action="open-paper"][data-paper="home-player-clip"]').waitFor();if(await page.locator('[data-action="close-dialog"]').count())await click('[data-action="close-dialog"]');await openLibraryArticle(page,'home-player-clip','article');await metadata();await actualPlay('[data-action="play"]','');await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').paused);const fullTarget=await pointerSeek(.49);await timeReached(fullTarget);const whole=await audio(page);await click('[data-action="mode"][data-mode="exam"]');await metadata();assert.ok((await audio(page)).duration<whole.duration-10,'a real shorter question recording is active');const clipTarget=await pointerSeek(.11);await timeReached(clipTarget);const clip=await audio(page),mapped=11.268+clipTarget;

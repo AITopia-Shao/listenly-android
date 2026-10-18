@@ -28,6 +28,9 @@ on:
       - tests/glass-motion.test.mjs
       - tests/wallpaper-flow.test.mjs
       - tests/import-media-browser.test.mjs
+      - tests/speed-cycle.test.mjs
+      - tests/playback-speed.mjs
+      - tests/ui-idle.test.mjs
       - tests/playback-modes.test.mjs
       - tests/playback-modes-browser.test.mjs
       - tests/replay-isolation.mjs
@@ -76,6 +79,9 @@ on:
       - tests/glass-motion.test.mjs
       - tests/wallpaper-flow.test.mjs
       - tests/import-media-browser.test.mjs
+      - tests/speed-cycle.test.mjs
+      - tests/playback-speed.mjs
+      - tests/ui-idle.test.mjs
       - tests/playback-modes.test.mjs
       - tests/playback-modes-browser.test.mjs
       - tests/replay-isolation.mjs
@@ -151,6 +157,8 @@ jobs:
           npm run test:playback
           npm run test:wallpaper
           npm run test:import-media
+          npm run test:speed
+          npm run test:idle
       - name: Save the original demo test APK and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -174,6 +182,8 @@ jobs:
             .build/playback-modes/
             .build/tahoe/wallpaper-flow/
             .build/import-media-browser/
+            .build/speed-cycle/browser/
+            .build/ui-idle/
           include-hidden-files: true
           retention-days: 14
 

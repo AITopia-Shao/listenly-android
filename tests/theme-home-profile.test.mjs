@@ -5,6 +5,7 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
 import {enterLibraryPaper,openLibraryArticle,clickAppControl} from './library-navigation.mjs';
+import {playbackRates,nextRate,assertSpeed,cycleSpeedTo} from './playback-speed.mjs';
 
 // Exercise the rendered app with genuine pointer gestures and decoded audio.
 let playwright;
@@ -58,26 +59,7 @@ const numberStat=async name=>Number((await page.locator(`[data-stat="${name}"]`)
 async function day(date){return page.locator(`.calendar-day[data-date="${date}"]`).evaluate(b=>({date:b.dataset.date,count:Number(b.dataset.count),level:Number(b.dataset.level),background:getComputedStyle(b).backgroundColor,label:b.getAttribute('aria-label')||b.getAttribute('title')}))}
 async function choose(index,choice){const toggle=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${choice}"]`)}
 async function submitArticle(){await click('[data-action="submit-article"]');assert.equal(await page.locator('[data-action="view-result"]').count(),1,'the whole article is submitted together')}
-async function speedMenu(buttonSelector='[data-action="speed"]'){
- const control=page.locator(buttonSelector).first();
- const rate=await page.locator('#audio').evaluate(a=>a.playbackRate);
- await control.click();
- const menu=page.getByRole('menu',{name:'播放速度'});await menu.waitFor();
- assert.equal(await control.getAttribute('aria-expanded'),'true','the speed control reports its open menu');
- assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),rate,'opening the speed menu does not change playback speed');
- assert.deepEqual(await menu.locator('[role="menuitemradio"]').evaluateAll(buttons=>buttons.map(b=>Number(b.dataset.speed))),[.75,1,1.25,1.5],'speed is chosen from four labeled rates');
- const selected=menu.locator('[aria-checked="true"]');assert.equal(await selected.count(),1,'one applied speed is marked');
- assert.equal(Number(await selected.getAttribute('data-speed')),rate,'the speed check mark matches the actual audio rate');
- return menu;
-}
-async function chooseSpeed(value){
- await page.locator(`.speed-popover [data-action="set-speed"][data-speed="${value}"]`).click();await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing'));
- assert.equal(await page.locator('.speed-popover').count(),0,'a speed choice dismisses the menu');
- assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),value,'the audio applies the chosen rate');
- assert.equal((await saved()).speed,value,'the chosen rate is persisted');
- assert.equal(await page.locator('[data-action="speed"]').first().getAttribute('aria-expanded'),'false','the speed control closes with its menu');
- assert.match(await page.locator('[data-action="speed"]').first().innerText(),new RegExp(`^${String(value).replace('.','\\.')}\\s*×$`),'the displayed rate matches the selected rate');
-}
+async function chooseSpeed(value){await cycleSpeedTo(page,value)}
 function shortRecording(bytes,duration){
  assert.equal(bytes.toString('ascii',0,4),'RIFF');assert.equal(bytes.toString('ascii',8,12),'WAVE');
  let format,pcm;
@@ -172,31 +154,21 @@ try{
  pass('both themes persist on reload and use the requested palettes',{lightHome});
  await click('.focus-open[data-action="open"]');await checkDefaultReader();
  await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
- const speedBefore=await page.locator('#audio').evaluate(a=>a.playbackRate);
- await speedMenu();await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
- assert.equal(await page.locator('.speed-popover').count(),0,'Escape dismisses the speed menu');
- assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),speedBefore,'cancelling speed selection keeps the rate');
- await speedMenu();await page.locator('.speed-shade').click({position:{x:4,y:4}});await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing'));
- assert.equal(await page.locator('.speed-popover').count(),0,'tapping outside dismisses speed selection');
- assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),speedBefore,'outside dismissal keeps the applied playback rate');
+ const speedBefore=await page.locator('#audio').evaluate(a=>a.playbackRate),positionBefore=await page.locator('#audio').evaluate(a=>a.currentTime);
+ let expectedSpeed=speedBefore;
+ for(let i=0;i<playbackRates.length;i++){expectedSpeed=nextRate(expectedSpeed);await click('[data-action="speed"]');await assertSpeed(page,expectedSpeed)}
+ assert.equal(expectedSpeed,speedBefore,'five direct presses wrap to the same rate');assert.ok(Math.abs(await page.locator('#audio').evaluate(a=>a.currentTime)-positionBefore)<.05,'paused rate cycling never seeks');
  await page.evaluate(()=>{window.__speedAudio=document.querySelector('#audio');window.__speedReader=document.querySelector('.main-panel')});
  await click('[data-action="play"]');await page.waitForFunction(()=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>.15&&!a.error});
- const speedStart=await audioState();await speedMenu();await chooseSpeed(1.25);
+ const speedStart=await audioState();await chooseSpeed(1.25);
  assert.ok(await page.evaluate(()=>window.__speedAudio===document.querySelector('#audio')&&window.__speedReader===document.querySelector('.main-panel')),'changing speed keeps audio and reading nodes intact');
  await page.waitForFunction(time=>{const a=document.querySelector('#audio');return !a.paused&&a.currentTime>time+.2&&a.playbackRate===1.25&&!a.error},speedStart.time);
  await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').paused);
  for(const viewport of [{width:360,height:800},{width:393,height:873},{width:430,height:932}]){
-  await page.setViewportSize(viewport);await speedMenu();
-  const bounds=await page.locator('.speed-popover').boundingBox();
-  assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=viewport.width&&bounds.y+bounds.height<=viewport.height,'anchored speed menu stays inside the phone viewport');
-  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'speed menu creates no horizontal page overflow');
-  await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
+  await page.setViewportSize(viewport);await chooseSpeed(1.75);const bounds=await page.locator('[data-action="speed"]').boundingBox();assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=viewport.width&&bounds.y+bounds.height<=viewport.height,'the direct rate control stays inside each phone viewport');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'rate cycling creates no horizontal page overflow');await chooseSpeed(1.25);
  }
- await page.setViewportSize({width:393,height:873});
- await page.emulateMedia({reducedMotion:'reduce'});await speedMenu();
- assert.equal(await page.locator('.speed-popover').evaluate(e=>e.getAnimations({subtree:true}).length),0,'reduced motion disables popup animation');
- await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));await page.emulateMedia({reducedMotion:'no-preference'});
- pass('explicit speed selection preserves playback, cancellation, reading position and phone layout',{speedBefore,chosenRate:1.25});
+ await page.setViewportSize({width:393,height:873});await page.emulateMedia({reducedMotion:'reduce'});await chooseSpeed(2);assert.equal(await page.locator('[data-action="speed"]').evaluate(e=>e.getAnimations({subtree:true}).length),0,'reduced motion keeps speed changes immediate');await chooseSpeed(1.25);await page.emulateMedia({reducedMotion:'no-preference'});
+ pass('direct five-rate cycling preserves playback, reading position and phone layout',{speedBefore,chosenRate:1.25});
  const before=await bookmarkStyle();assert.equal(before.pressed,'false');assert.equal(before.fill,'none');
  await click('[data-action="bookmark"]');await page.waitForTimeout(220);
  const collected=await bookmarkStyle();assert.equal(collected.pressed,'true');assert.notEqual(collected.fill,'none','collected bookmark is filled');assert.equal(collected.background,before.background,'collecting does not darken a rectangle');
@@ -225,10 +197,10 @@ try{
  assert.ok(await page.locator('.activity-legend').getAttribute('aria-label'),'calendar color key retains an accessible description');
  assert.equal(await page.locator('.settings-card [data-action="speed"],#pref-speed').count(),0,'profile removes duplicate speed adjustment');
  assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),1.25,'entering profile preserves the player rate');
- await click('[data-action="nav"][data-route="home"]');await speedMenu();await chooseSpeed(.75);
+ await click('[data-action="nav"][data-route="home"]');await chooseSpeed(1.75);
  await page.reload();await page.locator('.focus-card').waitFor();
- assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),.75,'saved speed is applied after reload');
- await speedMenu();await chooseSpeed(1);await click('[data-action="nav"][data-route="profile"]');
+ assert.equal(await page.locator('#audio').evaluate(a=>a.playbackRate),1.75,'saved speed is applied after reload');
+ await chooseSpeed(1);await click('[data-action="nav"][data-route="profile"]');
  pass('speed exists only in the player and its selected rate survives reload');
  assert.equal(await numberStat('today-listening-minutes'),3,'listening minutes count today instead of all past days');
  assert.equal(await numberStat('today-articles'),1,'completed article count includes today only');

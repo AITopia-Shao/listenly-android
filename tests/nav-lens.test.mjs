@@ -20,7 +20,7 @@ const page=await browser.newPage({viewport:{width:393,height:873},deviceScaleFac
 page.on('pageerror',error=>result.pageErrors.push(error.message));
 const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
 const navButton=route=>`.bottom-nav [data-action="nav"][data-route="${route}"]`;
-const click=async selector=>{await page.locator(selector).first().click();if(/set-speed|set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
+const click=async selector=>{await page.locator(selector).first().click();if(/set-filter|close-dialog/.test(selector))await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'))};
 function pass(label,details){result.checks.push({label,...(details?{details}:{})})}
 const range=values=>Math.max(...values)-Math.min(...values);
 function frameAssertAligned(frame,route,tolerance=.8){
@@ -37,7 +37,7 @@ async function installProbe(){await page.evaluate(()=>{
   const nav=document.querySelector('.bottom-nav'),lens=nav?.querySelector('.nav-lens');
   if(!nav||!lens)return null;
   const style=getComputedStyle(lens),targets={};
-  for(const b of nav.querySelectorAll('.nav-item'))targets[b.dataset.route]=geometry(b);
+  for(const b of nav.querySelectorAll('.nav-item')){const copy=b.querySelector('[data-lens-copy]'),base=copy?.querySelector('.lens-copy-base'),emphasis=copy?.querySelector('.lens-copy-emphasis');targets[b.dataset.route]={...geometry(b),label:base&&emphasis?{text:copy.innerText,baseWeight:Number(getComputedStyle(base).fontWeight),strongWeight:Number(getComputedStyle(emphasis).fontWeight),baseOpacity:Number(getComputedStyle(base).opacity),strongOpacity:Number(getComputedStyle(emphasis).opacity),hidden:emphasis.getAttribute('aria-hidden'),duplicateText:emphasis.textContent,paintedText:getComputedStyle(emphasis,'::before').content}:null}}
   return {time:performance.now(),lens:geometry(lens),nav:geometry(nav),targets,route:nav.querySelector('[aria-current="page"]')?.dataset.route,currentCount:nav.querySelectorAll('[aria-current="page"]').length,transform:style.transform,backdropFilter:style.backdropFilter||style.webkitBackdropFilter,pointerEvents:style.pointerEvents};
  };
  window.__navLensClicks=[];
@@ -78,6 +78,9 @@ try{
  const hitTargets=await page.locator('.bottom-nav .nav-item').evaluateAll(buttons=>buttons.map(b=>{const r=b.getBoundingClientRect();return {route:b.dataset.route,width:r.width,height:r.height,hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)?.closest('.nav-item')===b}}));
  assert.equal(initial.pointerEvents,'none','lens never intercepts navigation gestures');
  assert.ok(hitTargets.every(b=>b.width>=44&&b.height>=44&&b.hit),'every destination has an unobstructed 44px target');
+ for(const [route,text] of Object.entries({home:'听力',library:'资料库',profile:'我的'})){
+  const label=initial.targets[route].label;assert.ok(label,'each navigation destination has visible base and emphasis text layers');assert.equal(label.text,text,'visual emphasis does not duplicate the text content');assert.equal(label.baseWeight,400);assert.equal(label.strongWeight,600);assert.equal(label.hidden,'true');assert.equal(label.duplicateText,'');assert.ok(label.paintedText.includes(text),'the strong layer generates the same visible label');assert.equal(await page.getByRole('button',{name:text,exact:true}).count(),1,'one complete accessible destination name is exposed');assert.ok(route==='home'?label.strongOpacity>.99&&label.baseOpacity<.01:label.strongOpacity<.01&&label.baseOpacity>.99,'the emphasis layer agrees with the selected destination');
+ }
  pass('one accessible current destination and unobstructed touch targets',{initial,hitTargets});
 
  await captureStart();await click(navButton('profile'));const destination=await settled('profile');const motion=await captureEnd();frameAssertAligned(destination,'profile');
@@ -94,6 +97,7 @@ try{
  assert.ok(Math.max(...motion.map(f=>f.lens.width))-initial.lens.width>2,'lens visibly stretches along its travel');
  assert.ok(initial.lens.height-Math.min(...motion.map(f=>f.lens.height))>.7,'lens compresses vertically during travel');
  assert.ok(duration<1800,'lens settles promptly without an endless motion tail');
+ const labels=motion.map(frame=>frame.targets.profile.label);assert.ok(labels.filter(label=>label.strongOpacity>.02&&label.strongOpacity<.98).length>=3,'the incoming label paints multiple intermediate bold-layer opacities');assert.ok(labels.every(label=>label.baseWeight===400&&label.strongWeight===600),'optical emphasis keeps both font metrics fixed during travel');assert.ok(labels.every(label=>Math.abs(label.baseOpacity+label.strongOpacity-1)<.01),'normal and bold label layers cross-fade together');assert.ok(destination.targets.profile.label.strongOpacity>.99&&destination.targets.home.label.strongOpacity<.01,'emphasis follows the moving lens to its new destination');
  assert.ok(await page.evaluate(()=>{const n=window.__navLensNodes;return n.nav===document.querySelector('.bottom-nav')&&n.lens===document.querySelector('.nav-lens')&&n.buttons.every((b,i)=>b===document.querySelectorAll('.bottom-nav .nav-item')[i])}),'navigation, lens and button nodes survive the content route change');
  result.crossTabFrames=motion;pass('cross-tab movement has intermediate frames, nonlinear travel and elastic deformation',{duration,nonlinearity,record});
 

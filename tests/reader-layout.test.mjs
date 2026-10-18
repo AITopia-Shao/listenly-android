@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {openLibraryArticle,navigateToLibrary} from './library-navigation.mjs';
+import {playbackRates,nextRate,assertSpeed,cycleSpeedTo} from './playback-speed.mjs';
 import {writeFile} from 'node:fs/promises';
 import path from 'node:path';
 
@@ -106,19 +107,12 @@ export async function verifyCompactPlayerControls(page){
  await page.locator('[data-action="seek-relative"][data-seconds="5"]').click();
  assert.ok(Math.abs(await page.locator('#audio').evaluate(audio=>audio.currentTime)-12)<.2,'forward button moves five seconds');
  const rate=await page.locator('#audio').evaluate(audio=>audio.playbackRate);
- await page.locator('[data-action="speed"]').click();
- assert.equal(await page.locator('#audio').evaluate(audio=>audio.playbackRate),rate,'opening the speed menu keeps the actual audio rate');
- const choices=page.locator('.speed-popover [data-action="set-speed"]');
- assert.deepEqual(await choices.evaluateAll(buttons=>buttons.map(button=>Number(button.dataset.speed))),[.75,1,1.25,1.5],'the menu offers the four explicit playback rates');
- await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing,.dialog-shade.is-closing'));
- assert.equal(await page.locator('.speed-popover').count(),0,'Escape cancels speed adjustment');
- for(const speed of [.75,1,1.25,1.5,rate]){
-  await page.locator('[data-action="speed"]').click();
-  await page.locator(`.speed-popover [data-action="set-speed"][data-speed="${speed}"]`).click();await page.waitForFunction(()=>!document.querySelector('.speed-shade.is-closing'));
-  assert.equal(await page.locator('#audio').evaluate(audio=>audio.playbackRate),speed,'explicit speed selection updates the decoded recording');
-  assert.equal(await page.locator('[data-action="speed"]').getAttribute('aria-expanded'),'false','selecting a speed dismisses its menu');
-  assert.match(await page.locator('[data-action="speed"]').innerText(),new RegExp(`^${String(speed).replace('.','\\.')}\\s*×$`),'the speed control displays the applied value');
+ let expected=rate;
+ for(let i=0;i<playbackRates.length;i++){
+  expected=nextRate(expected);await page.locator('[data-action="speed"]').click();await assertSpeed(page,expected);
  }
+ assert.equal(expected,rate,'five direct presses return to the initial rate');
+ await cycleSpeedTo(page,rate);
  await page.locator('.sentence').first().click();
  assert.equal(await page.locator('#audio').evaluate(audio=>audio.paused),false,'a sentence still starts audio');
  await page.locator('[data-action="play"]').click();
