@@ -1,6 +1,6 @@
 {
   "name": "listenly-android",
-  "version": "1.0.13",
+  "version": "2.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,7 +13,7 @@
     "prepare:demo": "npm run build:web && python tools/prepare-demo-assets.py",
     "start": "node tools/preview.mjs",
     "start:demo": "node tools/preview.mjs --demo",
-    "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs tests/activity.test.mjs tests/playback-modes.test.mjs tests/glass-motion.test.mjs",
+    "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs tests/activity.test.mjs tests/playback-modes.test.mjs tests/glass-motion.test.mjs tests/paper-timeline.test.mjs",
     "test:demo": "python -m unittest discover -s tests -p test_demo_assets.py",
     "test:ui": "node tests/ui.test.mjs --demo",
     "test:replay": "node tests/audio-replay.test.mjs --demo",
@@ -27,7 +27,9 @@
     "test:wallpaper": "node tests/wallpaper-flow.test.mjs --demo",
     "test:import-media": "node tests/import-media-browser.test.mjs",
     "test:speed": "node tests/speed-cycle.test.mjs --demo",
-    "test:idle": "node tests/ui-idle.test.mjs --demo"
+    "test:idle": "node tests/ui-idle.test.mjs --demo",
+    "test:theme": "node tests/theme-compositor.test.mjs --demo",
+    "test:paper": "node tests/paper-playback.test.mjs"
   },
   "devDependencies": {
     "@babel/core": "7.29.7",

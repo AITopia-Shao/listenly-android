@@ -5,6 +5,7 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
 import {clickAppControl,enterLibraryPaper} from './library-navigation.mjs';
+import {installThemeAppearanceReader} from './theme-appearance.mjs';
 
 // Check painted pixels and geometry after genuine gestures. An accepted CSS
 // filter name or an app-owned "moving" flag alone cannot pass these checks.
@@ -18,6 +19,7 @@ await mkdir(output,{recursive:true});
 const result={passed:false,entrySha256:createHash('sha256').update(await readFile(path.join(webRoot,'app.compat.js'))).digest('hex'),checks:[],routes:[],pageErrors:[],failedImages:[]};
 const browser=await playwright.chromium.launch({...(process.env.LISTENLY_BROWSER_CHANNEL?{channel:process.env.LISTENLY_BROWSER_CHANNEL}:(process.platform==='win32'?{channel:'msedge'}:{})),headless:true});
 const page=await browser.newPage({viewport:{width:393,height:873},deviceScaleFactor:1,hasTouch:true,reducedMotion:'no-preference'});
+await installThemeAppearanceReader(page);
 page.on('pageerror',error=>result.pageErrors.push(error.message));
 page.on('requestfailed',request=>{if(request.resourceType()==='image')result.failedImages.push({url:request.url(),error:request.failure()?.errorText})});
 const server=await startPreview(0,webRoot),url=`http://127.0.0.1:${server.address().port}`;
@@ -140,14 +142,11 @@ async function glyphVisibility(selector,name){
 }
 async function makeFixture(){
  const folder=path.join(output,'fixture','wallpaper-original');await mkdir(folder,{recursive:true});
- const original=JSON.parse(await readFile(path.join(webRoot,'demo.json'),'utf8')),source=original.articles.find(article=>article.id==='morning');
- const articles=[];
- for(const id of ['one','two']){
-  await copyFile(path.join(webRoot,'media/morning.wav'),path.join(folder,`${id}.wav`));
-  const transcript=source.transcript.map((row,index)=>({...row,en:`${index+1}. ${row.en}`,timed:true}));
-  articles.push({id,title:id==='one'?'第1篇':'第2篇',duration:source.duration,audio:{intensive:`${id}.wav`,exam:`${id}.wav`},transcript,questions:source.questions});
- }
- await writeFile(path.join(folder,'paper.json'),JSON.stringify({id:'wallpaper-original',title:'透镜交互验证',year:2004,articles}));return folder;
+ const original=JSON.parse(await readFile(path.join(webRoot,'demo.json'),'utf8'));
+ await copyFile(path.join(webRoot,original.audio),path.join(folder,'paper.wav'));
+ const articles=original.articles.map((article,index)=>{const {audio,...chapter}=article;return {...chapter,id:index===0?'one':'two',title:`第${index+1}篇`,transcript:article.transcript.map((row,sentence)=>({...row,en:`${sentence+1}. ${row.en}`,timed:true}))}});
+ const paper={...original,id:'wallpaper-original',title:'透镜交互验证',year:2004,audio:'paper.wav',articles};
+ await writeFile(path.join(folder,'paper.json'),JSON.stringify(paper));return {folder,paper};
 }
 
 try{
@@ -155,7 +154,8 @@ try{
  const day=await wallpaper('home-day');
  assert.doesNotMatch(await page.locator('#app').innerText(),/\d+\s*(?:篇|套)(?:\s|$)/,'home omits decorative material counts');
  await click('[data-action="nav"][data-route="library"]');const libraryDay=await wallpaper('library-day');assert.ok(difference(day,libraryDay).meanChannelDifference<.5,'routing keeps the same fixed wallpaper position');
- const fixture=await makeFixture();await page.locator('#folder-input').setInputFiles(fixture);await page.locator('[data-action="select-paper"][data-paper="wallpaper-original"]').waitFor();if(await page.locator('.dialog-shade:not(.is-closing)').count())await click('[data-action="close-dialog"]');
+ await click('[data-action="open-collection"][data-collection="original"]');
+ const fixture=await makeFixture();await page.locator('#folder-input').setInputFiles(fixture.folder);await page.locator('[data-action="select-paper"][data-paper="wallpaper-original"]').waitFor();if(await page.locator('.dialog-shade:not(.is-closing)').count())await click('[data-action="close-dialog"]');
  assert.equal(await page.locator('.selection-indicator,.paper-select svg rect').count(),0,'suite selection has no duplicate checkbox');
  assert.doesNotMatch(await page.locator('#library-list').innerText(),/\d+\s*(?:篇|套)(?:\s|$)/,'library omits decorative article/suite counts');
  const paperList=await page.locator('[data-flow-list="library"]').evaluate(element=>{const s=getComputedStyle(element);return {radius:s.borderTopLeftRadius,border:s.borderTopWidth,background:s.backgroundColor}});assert.equal(parseFloat(paperList.radius),0,'paper choices are divided rows, without one large rounded outside box');
@@ -170,26 +170,26 @@ try{
  assert.deepEqual(await page.locator('.home-paper-row').evaluateAll(rows=>rows.map(row=>row.dataset.article)),originalRows,'playing an article retains its original list position');const optical=await refraction('[data-flow-list^="home:"]','home-row-refraction');pass('home selection moves and transfers optical type emphasis without removing list rows',{homeMotion,glyph,triangle,optical});
 
  await click('.focus-open');assert.equal(await page.locator('.practice-header [data-action="nav"][data-route="library"]').count(),0,'reader header keeps the bookmark without the library shortcut');assert.equal(await page.locator('.practice-header [data-action="bookmark"]').count(),1);
- await wallpaper('reader-hidden-day');await click('[data-action="display"][data-display="original"]');await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);await page.locator('#seek').press('Home');await waitFlow('[data-flow-list^="sentences:"]');
- await startProbe('[data-flow-list^="sentences:"]');const slider=await rect('#seek');await page.mouse.move(slider.left+9,slider.cy);await page.mouse.down();await page.mouse.move(slider.left+9+(slider.width-18)*.74,slider.cy,{steps:8});await page.mouse.up();await waitFlow('[data-flow-list^="sentences:"]');const sentenceMotion=verifyTravel(await endProbe(),'sentence lens');
+ await wallpaper('reader-hidden-day');await click('[data-action="display"][data-display="original"]');await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);await waitFlow('[data-flow-list^="sentences:"]');
+ await startProbe('[data-flow-list^="sentences:"]');const slider=await rect('#seek'),position=Number(await page.locator('#seek').inputValue()),duration=Number(await page.locator('#seek').getAttribute('max')),chapter=fixture.paper.articles[1],target=chapter.start+(chapter.end-chapter.start)*.74;await page.mouse.move(slider.left+9+(slider.width-18)*position/duration,slider.cy);await page.mouse.down();await page.mouse.move(slider.left+9+(slider.width-18)*target/duration,slider.cy,{steps:8});await page.mouse.up();await waitFlow('[data-flow-list^="sentences:"]');const sentenceMotion=verifyTravel(await endProbe(),'sentence lens');
  const selectedSentence=await page.locator('.sentence.active').evaluate(element=>({index:Number(element.dataset.index),start:element.querySelector('.timestamp').textContent}));assert.ok(selectedSentence.index>=3,'the actual range drag advances sentence selection with the audio position');
  await page.setViewportSize({width:320,height:740});await waitFlow('[data-flow-list^="sentences:"]');
  const panel=await page.locator('.main-panel').evaluate(element=>{element.scrollTop=element.scrollHeight;const s=getComputedStyle(element),bar=getComputedStyle(element,'::-webkit-scrollbar');return {scroll:element.scrollTop,range:element.scrollHeight-element.clientHeight,barDisplay:bar.display,barWidth:bar.width,gutter:element.offsetWidth-element.clientWidth-parseFloat(s.borderLeftWidth)-parseFloat(s.borderRightWidth)}});assert.ok(panel.range>0&&panel.scroll>0,'removing the visual scrollbar preserves actual article scrolling');assert.ok(panel.barDisplay==='none'||parseFloat(panel.barWidth)===0,'reader does not paint a scrollbar');assert.ok(panel.gutter<1,'the hidden scrollbar reserves no reading width');const dayContrast={selected:await textContrast('.sentence.active .en','selected-day'),ordinary:await textContrast('.sentence:not(.active) .en','ordinary-day')};await page.screenshot({path:path.join(output,'reader-selected-day.png')});pass('timeline scrubbing transfers the viscous sentence lens and optical text emphasis; scrolling stays available',{sentenceMotion,selectedSentence,panel,dayContrast});
  await page.setViewportSize({width:393,height:873});await frames(8);
 
  await click('[data-action="mode"][data-mode="exam"]');await wallpaper('quiz-day');
- for(const [index,choice] of [[0,'B'],[1,'A'],[2,'C']]){const toggle=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${choice}"]`)}
- assert.equal(await page.locator('[data-action="submit-article"]').isDisabled(),false,'the real whole-article submit is enabled');const submit=await transmission('[data-action="submit-article"]','enabled-submit');await page.screenshot({path:path.join(output,'quiz-ready-day.png')});await click('[data-action="submit-article"]');await click('[data-action="view-result"]');await page.locator('.result-card').waitFor();await wallpaper('result-day');pass('the enabled submit surface remains frosted and visibly transmits its surroundings, including the completed result page',{submit});
+ for(const [index,question] of fixture.paper.articles[1].questions.entries()){const toggle=page.locator(`[data-action="toggle-question"][data-index="${index}"]`);if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${question.answer}"]`)}
+ assert.equal(await page.locator('[data-action="submit-article"]').isDisabled(),false,'the real whole-article submit is enabled');const submit=await transmission('[data-action="submit-article"]','enabled-submit');await page.screenshot({path:path.join(output,'quiz-ready-day.png')});await click('[data-action="submit-article"]');await page.locator('.result-card').waitFor();await wallpaper('result-day');pass('the enabled submit surface remains frosted and visibly transmits its surroundings, including the completed result page',{submit});
  await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');await wallpaper('profile-day');assert.equal(await page.locator('.settings-card h2').filter({hasText:/^设置$/}).count(),0);const recordCard=await page.locator('[data-action="export"]').evaluate(button=>{const card=button.closest('.settings-card'),r=card.getBoundingClientRect();return {text:card.innerText,height:r.height}});assert.doesNotMatch(recordCard.text,/设置|播放速度|资料导入/);assert.ok(recordCard.height<=80,'the learning-record row is compact');
 
- await page.evaluate(()=>{window.__wallpaperFrames=[];window.__wallpaperSampling=true;const sample=()=>{if(!window.__wallpaperSampling)return;const night=document.querySelector('#wallpaper-scene .wallpaper-night');window.__wallpaperFrames.push({time:performance.now(),night:Number(getComputedStyle(night).opacity)});requestAnimationFrame(sample)};sample()});await click('[data-action="theme"][data-theme="dark"]');await settled();await frames(4);const fade=await page.evaluate(()=>{window.__wallpaperSampling=false;return window.__wallpaperFrames});
+ await page.evaluate(()=>{window.__wallpaperFrames=[];window.__wallpaperSampling=true;const sample=()=>{if(!window.__wallpaperSampling)return;const appearance=window.__themeAppearanceRead();window.__wallpaperFrames.push({time:appearance.time,night:appearance.night,rawNight:appearance.rawNight,pseudoOpacity:appearance.pseudoOpacity,renderer:appearance.renderer});requestAnimationFrame(sample)};sample()});await click('[data-action="theme"][data-theme="dark"]');await settled();await frames(4);const fade=await page.evaluate(()=>{window.__wallpaperSampling=false;return window.__wallpaperFrames});
  const fadeSteps=fade.slice(1).map((frame,index)=>({elapsedMs:frame.time-fade[index].time,change:frame.night-fade[index].night}));result.appearanceFade={fade,steps:fadeSteps};
  assert.ok(fade.filter(frame=>frame.night>.01&&frame.night<.99).length>=8,'wallpapers cross-fade through many actual composited opacities');
  // A skipped presentation frame spans more of a valid CSS transition. Check
  // change against its measured elapsed time, not a hardware-specific frame cap.
  assert.ok(fadeSteps.every(step=>step.change>=-.002),'one appearance change never flashes the wallpaper backwards');assert.ok(fadeSteps.every(step=>Math.abs(step.change)<.02+step.elapsedMs*.015),'appearance has no abrupt opacity jump within a presented frame interval');
  const night=await wallpaper('profile-night');assert.ok(difference(day,night).meanChannelDifference>5,'the night wallpaper paints distinctly different actual pixels');
- await click('[data-action="nav"][data-route="home"]');await wallpaper('home-night');await click('[data-action="nav"][data-route="library"]');await wallpaper('library-night');await enterLibraryPaper(page,'wallpaper-original');await click('[data-action="open"][data-paper="wallpaper-original"][data-article="one"]');await click('[data-action="display"][data-display="original"]');await wallpaper('reader-night');const nightContrast={selected:await textContrast('.sentence.active .en','selected-night'),ordinary:await textContrast('.sentence:not(.active) .en','ordinary-night')};await click('[data-action="mode"][data-mode="exam"]');await wallpaper('quiz-night');pass('all pages share the day/night wallpaper and a gradual cross-fade',{recordCard,fade,nightContrast});
+ await click('[data-action="nav"][data-route="home"]');await wallpaper('home-night');await click('[data-action="nav"][data-route="library"]');await wallpaper('library-night');await click('[data-action="open-collection"][data-collection="original"]');await enterLibraryPaper(page,'wallpaper-original');await click('[data-action="open"][data-paper="wallpaper-original"][data-article="one"]');await click('[data-action="display"][data-display="original"]');await wallpaper('reader-night');const nightContrast={selected:await textContrast('.sentence.active .en','selected-night'),ordinary:await textContrast('.sentence:not(.active) .en','ordinary-night')};await click('[data-action="mode"][data-mode="exam"]');await wallpaper('quiz-night');pass('all pages share the day/night wallpaper and a gradual cross-fade',{recordCard,fade,nightContrast});
 
  await page.emulateMedia({reducedMotion:'reduce'});await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');await click('[data-action="theme"][data-theme="light"]');assert.equal(await page.locator('#wallpaper-scene .wallpaper-night').evaluate(element=>Number(getComputedStyle(element).opacity)),0,'reduced motion changes the wallpaper without a hidden animation tail');await click('[data-action="import"]');await page.locator('.dialog').waitFor();await page.screenshot({path:path.join(output,'import-day.png')});assert.equal(await page.locator('.dialog .format-details').count(),0);await click('[data-action="close-dialog"]');pass('reduced motion and import retain the shared wallpaper without residual overlays');
  assert.deepEqual(result.pageErrors,[]);assert.deepEqual(result.failedImages,[]);result.passed=true;console.log(JSON.stringify({passed:true,checks:result.checks.length,entrySha256:result.entrySha256,output}));

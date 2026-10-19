@@ -9,7 +9,7 @@ export async function mountWallpaper(){
     const source=await response.json();
     const safe=value=>typeof value==='string'&&/^wallpapers\/[a-z0-9_-]+\.(?:svg|png|webp|jpg)$/.test(value);
     if(!safe(source.day)||!safe(source.night))return;
-    const images=await Promise.all([source.day,source.night].map(path=>new Promise(resolve=>{const image=new Image();image.onload=()=>resolve({path,ok:true});image.onerror=()=>resolve({path,ok:false});image.src=path})));
+    const images=await Promise.all([source.day,source.night].map(path=>new Promise(resolve=>{const image=new Image();image.onload=()=>{const ready=typeof image.decode==='function'?image.decode().catch(()=>{}):Promise.resolve();ready.then(()=>resolve({path,ok:true}))};image.onerror=()=>resolve({path,ok:false});image.src=path})));
     if(images.every(image=>image.ok)){
       scene.querySelector('.wallpaper-day').style.backgroundImage=`url("${source.day}")`;
       scene.querySelector('.wallpaper-night').style.backgroundImage=`url("${source.night}")`;

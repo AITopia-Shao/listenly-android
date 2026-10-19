@@ -57,10 +57,10 @@ async function activateQuestion(index){const toggle=page.locator(`[data-action="
 const snapshot=()=>page.locator('#audio').evaluate(audio=>({src:audio.getAttribute('src'),currentSrc:audio.currentSrc,time:audio.currentTime,duration:audio.duration,readyState:audio.readyState,networkState:audio.networkState,seeking:audio.seeking,paused:audio.paused,ended:audio.ended,error:audio.error?{code:audio.error.code,message:audio.error.message}:null}));
 async function record(label){const state=await snapshot();assert.equal(state.error,null,label);result.checks.push({label,state});return state}
 async function metadata(){await page.waitForFunction(()=>{const a=document.querySelector('#audio');return a.readyState>=1&&Number.isFinite(a.duration)&&a.duration>1&&!a.seeking},{},{timeout:15000})}
-async function pause(){if(!(await snapshot()).paused){await click('[data-action="play"]');await page.waitForFunction(()=>document.querySelector('#audio').paused)}}
+async function pause(){if(!(await snapshot()).paused){await click('.big-play');await page.waitForFunction(()=>document.querySelector('#audio').paused)}}
 async function play(label){
   const before=await snapshot();assert.ok(before.paused,`${label}: starts paused`);
-  await click('[data-action="play"]');
+  await click('.big-play');
   const threshold=before.ended?0:before.time;
   await page.waitForFunction(t=>{const a=document.querySelector('#audio');return !a.paused&&!a.ended&&!a.error&&!a.seeking&&a.currentTime>t+.1},threshold,{timeout:15000});
   await record(label);
@@ -86,24 +86,14 @@ async function open(paper,article){
   await metadata();
 }
 async function seek(time){await pause();await page.locator('#audio').evaluate((a,t)=>a.currentTime=t,time);await page.waitForFunction(()=>!document.querySelector('#audio').seeking)}
-function slicePcmWave(bytes,start,end){
-  assert.equal(bytes.toString('ascii',0,4),'RIFF');assert.equal(bytes.toString('ascii',8,12),'WAVE');
-  let fmt,data;
-  for(let offset=12;offset+8<=bytes.length;){const tag=bytes.toString('ascii',offset,offset+4),size=bytes.readUInt32LE(offset+4);if(tag==='fmt ')fmt=bytes.subarray(offset+8,offset+8+size);if(tag==='data'){data=bytes.subarray(offset+8,offset+8+size);break}offset+=8+size+(size%2)}
-  assert.ok(fmt&&data,'recording includes PCM format and data');assert.equal(fmt.readUInt16LE(0),1,'original demo is PCM');
-  const blockAlign=fmt.readUInt16LE(12),byteRate=fmt.readUInt32LE(8);
-  const sliced=data.subarray(Math.floor(start*byteRate/blockAlign)*blockAlign,Math.floor(end*byteRate/blockAlign)*blockAlign);
-  const head=Buffer.alloc(20+fmt.length+8);head.write('RIFF');head.writeUInt32LE(head.length+sliced.length-8,4);head.write('WAVE',8);head.write('fmt ',12);head.writeUInt32LE(fmt.length,16);fmt.copy(head,20);head.write('data',20+fmt.length);head.writeUInt32LE(sliced.length,24+fmt.length);
-  return Buffer.concat([head,sliced]);
-}
 async function createImportedFixture(){
   const directory=path.join(output,'import-fixture','replay-import','article');await mkdir(directory,{recursive:true});
-  const recording=await readFile(path.join(webRoot,'media/morning.wav'));
+  const recording=await readFile(path.resolve('examples/demo/media/morning.wav'));
   await writeFile(path.join(directory,'full.wav'),recording);
-  await writeFile(path.join(directory,'question.wav'),slicePcmWave(recording,11.268,22.675));
-  await writeFile(path.join(path.dirname(directory),'paper.json'),JSON.stringify({id:'replay-import',title:'Repeated playback import',articles:[{id:'article',title:'Original imported audio',audio:{intensive:'article/full.wav',exam:'article/full.wav'},transcript:'article/transcript.json',questions:'article/questions.json'}]}));
+  const length=34.41215419501134;
+  await writeFile(path.join(path.dirname(directory),'paper.json'),JSON.stringify({id:'replay-import',title:'Repeated whole-paper playback import',schemaVersion:2,audio:'article/full.wav',duration:length,articles:[{id:'article',title:'Original imported paper',start:0,end:length,duration:length,audio:{intensive:'article/full.wav',exam:'article/full.wav'},transcript:'article/transcript.json',questions:'article/questions.json'}]}));
   await writeFile(path.join(directory,'transcript.json'),JSON.stringify([{start:0,end:5.329,en:'For years, Emma began every morning by checking her phone.',zh:'多年来，艾玛每天早晨的第一件事就是看手机。'},{start:5.329,end:11.268,en:'Before she even got out of bed, she was already thinking about work.'},{start:11.268,end:16.921,en:'One Monday, she decided to leave her phone in the kitchen overnight.'},{start:16.921,end:22.675,en:'The next morning, she opened the window and made herself a cup of tea.'}]));
-  await writeFile(path.join(directory,'questions.json'),JSON.stringify([{id:'q1',number:1,prompt:'Where did Emma leave her phone?',options:[{id:'A',text:'In the kitchen'},{id:'B',text:'In the bedroom'},{id:'C',text:'At work'},{id:'D',text:'Outside'}],answer:'A',audio:'question.wav',start:11.268,end:22.675,audioTimeline:[{clipStart:0,clipEnd:11.407,articleStart:11.268}]}]));
+  await writeFile(path.join(directory,'questions.json'),JSON.stringify([{id:'q1',number:1,prompt:'Where did Emma leave her phone?',options:[{id:'A',text:'In the kitchen'},{id:'B',text:'In the bedroom'},{id:'C',text:'At work'},{id:'D',text:'Outside'}],answer:'A',start:11.268,end:22.675}]));
   return path.dirname(path.dirname(directory));
 }
 async function transientReadFailure(){
@@ -114,20 +104,24 @@ async function transientReadFailure(){
     await click(`.quiz-question[data-question-index="${index}"] [data-action="answer"][data-option="${choice}"]`);
   }
   await click('[data-action="submit-article"]');
-  await click('[data-action="mode"][data-mode="intensive"]');
+  // Submission now advances to the next chapter. Explicitly reopen the
+  // completed first chapter for its bookmark and recovery position checks.
+  await open('listenly-original','morning');
   if(await page.locator('.bookmark:not(.active)').count())await click('[data-action="bookmark"]');
   await seek(6);await play('transient read failure: first playback succeeds');await pause();
   const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1')));
   const first=await snapshot();
-  await open('listenly-original','library');
-  const mediaUrl=`${base}/media/morning.wav`;
+  const mediaUrl=`${base}/media/original-suite.wav`;
   let failedRequests=0;
   await page.route(mediaUrl,async route=>{
     if(failedRequests===0){failedRequests++;await route.fulfill({status:503,contentType:'text/plain',body:'Temporary recording read failure'})}
     else await route.continue();
   });
-  await click('[data-action="nav"][data-route="library"]');
-  await openLibraryArticle(page,'listenly-original','morning');
+  // Restore the persisted complete-paper position through the real app entry.
+  // A bare audio.load() resets currentTime outside the app's reload protocol.
+  result.mediaEvents.push(...await page.evaluate(index=>window.replayMediaEvents.map(event=>({...event,document:index})),documentIndex));
+  result.actionTrace.push(...await page.evaluate(index=>window.replayActionTrace.map(event=>({...event,document:index})),documentIndex));documentIndex++;
+  await page.reload();await page.locator('.focus-card').waitFor();
   await page.waitForFunction(()=>Boolean(document.querySelector('#audio').error),{},{timeout:15000});
   const failed=await snapshot();
   result.transientReadFailure={purpose:'Fault recovery regression; does not reproduce or identify the GT7-specific cause',first,failed,failedRequests,savedAnswers:saved.answers,savedBookmarks:saved.bookmarks};
@@ -147,8 +141,8 @@ async function transientReadFailure(){
   await pause();
 }
 async function cancelPendingPlayback(){
-  await open('listenly-original','library');
-  const mediaUrl=`${base}/media/morning.wav`;
+  await open('replay-import','article');
+  const mediaUrl=`${base}/media/original-suite.wav`;
   let delayedRequests=0;
   await page.route(mediaUrl,async route=>{
     delayedRequests++;
@@ -211,14 +205,14 @@ try{
   await record('sentence selection continues through the next sentence without the obsolete loop');await pause();await play('ordinary play after sentence selection');await pause();
   await click('[data-action="mode"][data-mode="exam"]');await metadata();await play('WAV switch to exam');await pause();await click('[data-action="mode"][data-mode="intensive"]');await metadata();await play('WAV return from exam');await pause();
   const fixture=await createImportedFixture();await click('[data-action="nav"][data-route="library"]');await page.locator('#folder-input').setInputFiles(fixture);
-  await page.locator('[data-action="open-paper"][data-paper="replay-import"]').waitFor();
+  await page.waitForFunction(()=>JSON.parse(localStorage.getItem('listenly.state.v1')).lastImport?.count===1);
   if(await page.locator('[data-action="close-dialog"]').count())await click('[data-action="close-dialog"]');
   await openLibraryArticle(page,'replay-import','article');await metadata();assert.match((await snapshot()).src,/^blob:/);
   await seek(0);await play('Blob first playback');await pause();await finishAndReplay('Blob full recording');
   await seek(12);await click('[data-action="mode"][data-mode="exam"]');await metadata();
-  const clip=await snapshot();assert.match(clip.src,/^blob:/);assert.ok(clip.duration<12&&clip.duration>10,'question uses a genuine cut PCM recording');assert.ok(Math.abs(clip.time-(12-11.268))<.2,'clip preserves the article position');
-  await play('Blob genuine question clip');await pause();await finishAndReplay('Blob question clip');
-  await seek(1);await click('[data-action="mode"][data-mode="intensive"]');await metadata();assert.ok(Math.abs((await snapshot()).time-12.268)<.2);await play('Blob full recording after question clip');await pause();
+  const shared=await snapshot();assert.match(shared.src,/^blob:/);assert.ok(shared.duration>34&&shared.duration<35,'exam retains the genuine complete PCM recording');assert.ok(Math.abs(shared.time-12)<.2,'mode switching preserves the absolute paper coordinate');
+  await play('Blob shared paper in exam mode');await pause();await finishAndReplay('Blob shared exam paper');
+  await seek(12.268);await click('[data-action="mode"][data-mode="intensive"]');await metadata();assert.equal((await snapshot()).src,shared.src);assert.ok(Math.abs((await snapshot()).time-12.268)<.2);await play('Blob same full paper after exam');await pause();
   await open('listenly-original','library');await play('WAV switch away from Blob');await pause();await open('replay-import','article');await play('Blob return after another article');await pause();
   result.mediaEvents.push(...await page.evaluate(()=>window.replayMediaEvents.map(event=>({...event,document:1}))));
   result.actionTrace.push(...await page.evaluate(()=>window.replayActionTrace.map(event=>({...event,document:1}))));
@@ -228,12 +222,12 @@ try{
     const library=JSON.parse(await readFile(path.join(webRoot,'bundled-library.json'),'utf8'));
     const real=library.papers.find(p=>p.id==='cet6-2025-12-set1');assert.ok(real,'--real requires local 2025 M4A corpus');
     await open(real.id,'lt-1');await seek(0);await play('M4A first actual playback');await pause();await finishAndReplay('M4A 2025');
-    const timed=library.papers.find(p=>p.id==='cet6-2013-06-set2');assert.ok(timed,'--real requires local 2013 cut M4A');
-    await open(timed.id,'conversation-01');await seek(10);await play('M4A timed article');await pause();
-    await click('[data-action="mode"][data-mode="exam"]');await metadata();assert.match((await snapshot()).src,/-q09\.m4a$/);await play('M4A genuine cut question');await pause();await finishAndReplay('M4A cut question');
-    await click('[data-action="toggle-question"][data-index="1"]');await metadata();assert.match((await snapshot()).src,/-q10\.m4a$/);await play('M4A next cut question');await pause();
-    await activateQuestion(0);await metadata();assert.match((await snapshot()).src,/-q09\.m4a$/);await play('M4A return to previous cut question');await pause();
-    await click('[data-action="mode"][data-mode="intensive"]');await metadata();await play('M4A return to full article');await pause();
+    const timed=library.papers.find(p=>p.id==='cet6-2013-06-set2');assert.ok(timed?.audio,'--real requires the complete original 2013 recording');const chapter=timed.articles.find(a=>a.id==='conversation-01');
+    await open(timed.id,chapter.id);await seek(chapter.start+10);await play('2013 paper at its authored chapter coordinate');await pause();const whole=await snapshot();
+    await click('[data-action="mode"][data-mode="exam"]');await metadata();assert.equal((await snapshot()).src,whole.src);assert.ok(Math.abs((await snapshot()).time-whole.time)<.2);await play('2013 whole paper in exam mode');await pause();await finishAndReplay('2013 complete exam paper');
+    await open(timed.id,chapter.id);await click('[data-action="mode"][data-mode="exam"]');await metadata();await activateQuestion(1);assert.equal((await snapshot()).src,whole.src);await play('2013 next option dropdown on shared paper');await pause();
+    const beforeReturn=await snapshot();await activateQuestion(0);await metadata();assert.equal((await snapshot()).src,whole.src);assert.ok(Math.abs((await snapshot()).time-beforeReturn.time)<.2);await play('2013 previous option dropdown on shared paper');await pause();
+    await click('[data-action="mode"][data-mode="intensive"]');await metadata();assert.equal((await snapshot()).src,whole.src);await play('2013 same paper after exam');await pause();
   }
   if(!args.includes('--skip-read-failure'))await transientReadFailure();
   if(!args.includes('--skip-rapid-cancel'))await cancelPendingPlayback();
@@ -242,7 +236,7 @@ try{
   assert.deepEqual(result.requestFailures.filter(request=>request.failure!=='net::ERR_ABORTED'),[],'source changes may abort streams; other failed requests must not occur');
   assert.ok(result.mediaRequests.length>=2&&result.mediaRequests.every(response=>[200,206].includes(response.status)||(result.transientReadFailure&&response.status===503)),'media requests return complete or partial content, except the deliberate transient failure');
   result.passed=true;console.log(JSON.stringify({passed:true,checks:result.checks.length,entrySha256:result.entrySha256,output}));
-}catch(error){result.failure={message:error.message,stack:error.stack};result.finalState=await snapshot().catch(()=>null);await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}
+}catch(error){result.failure={message:error.message,stack:error.stack};result.finalState=await snapshot().catch(()=>null);result.finalSavedState=await page.evaluate(()=>JSON.parse(localStorage.getItem('listenly.state.v1'))).catch(()=>null);await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error}
 finally{
   result.isolatedReplayEnds=await page.evaluate(()=>window.__isolatedReplayEnds||[]).catch(()=>[]);
   result.mediaEvents.push(...await page.evaluate(index=>(window.replayMediaEvents||[]).map(event=>({...event,document:index})),documentIndex).catch(()=>[]));

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const importerPath = new URL('../app/src/main/assets/web/importer.js', import.meta.url);
 const importer = await readFile(importerPath, 'utf8');
-const { parseFolder, mergePapers, parseSubtitle, parseLrc, validateIntensiveTranscript, normalizePaper } = await import(`data:text/javascript;base64,${Buffer.from(importer).toString('base64')}`);
+const { parseFolder, mergePapers, parseSubtitle, parseLrc, validateIntensiveTranscript, normalizePaper } = await import(importerPath.href);
 const file = (path, text, url = `local:${path}`) => ({ path, text: typeof text === 'object' ? JSON.stringify(text) : text, url });
 const options = ['First', 'Second', 'Third', 'Fourth'].map((text, index) => ({ id: String.fromCharCode(65 + index), text }));
 

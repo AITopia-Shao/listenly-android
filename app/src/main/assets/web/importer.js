@@ -1,3 +1,4 @@
+import {normalizePaperTimeline,validatePaperTimeline,paperAudio} from './paper-timeline.js';
 /** Folder-only material import. Metadata never grants access outside selected files. */
 const AUDIO = /\.(mp3|m4a|aac|wav|ogg|opus|flac|mp4)$/i;
 const TEXT = /\.(json|txt|srt|vtt|lrc)$/i;
@@ -290,8 +291,11 @@ export async function parseFolder(input, { restore = false } = {}) {
   const strictIntensive = mode === 'intensive' && !restore;
   const files = new Map();
   function finish(papers) {
+    if(warnings.some(item=>item.code==='INVALID_PAPER_TIMELINE'))return {papers:[],warnings,rejected:true};
+    papers=papers.map(normalizePaperTimeline);
     const merged = mergePapers([], papers);
     const notices = [...warnings, ...merged.warnings];
+    if(notices.some(item=>item.code==='INVALID_PAPER_TIMELINE'))return {papers:[],warnings:notices,rejected:true};
     if (strictIntensive) {
       const issues = merged.papers.flatMap(paper => paper.articles.flatMap(article => validateIntensiveTranscript(article)));
       const malformed = notices.some(item => ['INVALID_TRANSCRIPT', 'INVALID_TIMESTAMP', 'INVALID_AUDIO_DURATION',
@@ -450,6 +454,8 @@ export async function parseFolder(input, { restore = false } = {}) {
       ...(text ? { text } : {}), ...(translation ? { translation } : {}),
       ...(metadata.source ? { source: metadata.source } : {}),
       ...(duration !== null ? { duration } : {}),
+      ...(metadata.start!==undefined?{start:seconds(metadata.start)}:{}),
+      ...(metadata.end!==undefined?{end:seconds(metadata.end)}:{}),
     };
   }
   function resolveDirectory(reference, base) {
@@ -468,6 +474,7 @@ export async function parseFolder(input, { restore = false } = {}) {
         warning(warnings, 'INVALID_PAPER', 'paper.json 必须包含合法 id 和 articles 数组。', manifestPath);
         continue;
       }
+      const whole=typeof metadata.audio==='string'?audioReference(metadata.audio,dir(manifestPath)):null;
       const articles = [];
       const articleIds = new Set();
       for (const articleMetadata of metadata.articles) {
@@ -475,14 +482,19 @@ export async function parseFolder(input, { restore = false } = {}) {
           warning(warnings, 'ARTICLE_ID_COLLISION', `文章 ${short(articleMetadata.id)} 在同一试卷中重复，已保留第一份。`, manifestPath);
           continue;
         }
-        const article = await articleFromMetadata(articleMetadata, dir(manifestPath), manifestPath);
+        const article = await articleFromMetadata(whole?{...articleMetadata,audio:{intensive:metadata.audio,exam:metadata.audio},duration:seconds(articleMetadata.end)-seconds(articleMetadata.start)}:articleMetadata, dir(manifestPath), manifestPath);
         if (article) { articles.push(article); articleIds.add(article.id); }
       }
+      if (whole){const issues=validatePaperTimeline({audio:whole,duration:seconds(metadata.duration),articles});if(issues.length){issues.forEach(message=>warning(warnings,'INVALID_PAPER_TIMELINE',message,manifestPath));continue}}
+      if (metadata.audio&&!whole){warning(warnings,'INVALID_PAPER_TIMELINE','未找到所选文件夹中的整套音频。',manifestPath);continue}
       if (articles.length) papers.push({
         id: metadata.id, title: String(metadata.title || metadata.id),
         ...(Number.isInteger(metadata.year) ? { year: metadata.year } : {}),
         ...(metadata.session ? { session: String(metadata.session) } : {}),
-        ...(metadata.source ? { source: metadata.source } : {}), articles,
+        ...(metadata.source ? { source: metadata.source } : {}),
+        ...(whole?{schemaVersion:2,audio:whole,duration:seconds(metadata.duration)}:{}),
+        ...(metadata.collection&&safeId(metadata.collection.id)?{collection:{id:metadata.collection.id,title:short(metadata.collection.title||metadata.collection.id)}}:{}),
+        ...(metadata.kind?{kind:short(metadata.kind)}:{}), articles,
       });
     }
   }
@@ -532,6 +544,8 @@ export async function parseFolder(input, { restore = false } = {}) {
     papers.push({ id: paperId, title: String(metadata?.paperTitle || paperId), articles: [{
       id: articleId, title: String(metadata?.title || articleId), audio, transcript, questions,
       ...(duration !== null ? { duration } : {}),
+      ...(metadata.start!==undefined?{start:seconds(metadata.start)}:{}),
+      ...(metadata.end!==undefined?{end:seconds(metadata.end)}:{}),
       ...(translation ? { translation } : {}),
     }] });
     if (audioPaths.length > 1) warning(warnings, 'MULTIPLE_AUDIO', '子文件夹有多个音频，默认使用按文件名排序的第一个；建议添加 paper.json。', folder);
@@ -564,6 +578,101 @@ export function mergePapers(existing = [], incoming = []) {
       continue;
     }
     let paper = paperMap.get(candidate.id);
+    const fullUrl = paperAudio(candidate);
+    // Restored, single legacy recordings without authored end markers remain
+    // readable. New schema-v2 papers and every replacement of an existing
+    // whole recording must pass an atomic paper-level preflight.
+    const fullUpdate = candidate.schemaVersion === 2 || (fullUrl && candidate.articles.length > 0 &&
+      candidate.articles.every(article => Number.isFinite(article?.start) && Number.isFinite(article?.end)));
+    if (fullUpdate) {
+      if (paper && ((paper.year && candidate.year && paper.year !== candidate.year) ||
+        (paper.session && candidate.session && paper.session !== candidate.session) || contentMismatch(paper, candidate))) {
+        warning(warnings, 'PAPER_ID_COLLISION', `试卷 ${candidate.id} 的年份、场次或校验标识冲突，整套录音与进度标记均未更改。`);
+        continue;
+      }
+      const issues = validatePaperTimeline(candidate);
+      if (!candidate.articles.length) issues.push('整套材料至少需要一个篇章标记');
+      if (typeof fullUrl !== 'string' || !fullUrl.trim()) issues.push('缺少有效整套音频');
+      if (issues.length) {
+        issues.forEach(message => warning(warnings, 'INVALID_PAPER_TIMELINE', `${message}；整套录音与已有材料均未更改。`));
+        continue;
+      }
+      const existing = new Map((paper?.articles || []).map(article => [article.id, article]));
+      const ids = new Set();
+      const textOf = article => (article.transcript || []).map(row => row.en || '').join(' ').replace(/\s+/g, ' ').trim();
+      let rejected = false;
+      for (const article of candidate.articles) {
+        if (!safeId(article?.id) || ids.has(article.id)) {
+          warning(warnings, 'ARTICLE_ID_COLLISION', `试卷 ${candidate.id} 的篇章编号无效或重复，整套录音与进度标记均未更改。`);
+          rejected = true; break;
+        }
+        ids.add(article.id);
+        const old = existing.get(article.id);
+        if (!old) continue;
+        if (contentMismatch(old, article)) {
+          warning(warnings, 'ARTICLE_ID_COLLISION', `文章 ${candidate.id}/${article.id} 的校验标识冲突，整套录音与进度标记均未更改。`);
+          rejected = true; break;
+        }
+        if (textOf(old) && textOf(article) && textOf(old) !== textOf(article)) {
+          warning(warnings, 'TRANSCRIPT_CONFLICT', `文章 ${article.id} 的原文内容冲突，整套录音与进度标记均未更改；请核对文章编号。`);
+          rejected = true; break;
+        }
+        const oldQuestions = new Map((old.questions || []).map(question => [question.id, question]));
+        if ((article.questions || []).some(question => oldQuestions.has(question.id) && questionConflict(oldQuestions.get(question.id), question))) {
+          warning(warnings, 'QUESTION_ID_COLLISION', `文章 ${article.id} 的题目内容或答案冲突，整套录音与进度标记均未更改。`);
+          rejected = true; break;
+        }
+      }
+      if (rejected) continue;
+      if ((paper?.articles || []).some(article => Number.isFinite(article.start) && Number.isFinite(article.end) && !ids.has(article.id))) {
+        warning(warnings, 'INVALID_PAPER_TIMELINE', `试卷 ${candidate.id} 缺少已有篇章的完整进度标记，整套录音未更改；请提供整套篇章标记。`);
+        continue;
+      }
+      const staged = paper ? { ...paper, articles: [] } : { ...candidate, articles: [] };
+      for (const key of ['year', 'session', 'source', 'collection', 'kind']) if (!staged[key] && candidate[key]) staged[key] = candidate[key];
+      staged.audio = candidate.audio;
+      staged.duration = Number.isFinite(candidate.duration) ? candidate.duration : Math.max(0, ...candidate.articles.map(article => article.end));
+      staged.schemaVersion = 2;
+      for (const incomingArticle of candidate.articles) {
+        const old = existing.get(incomingArticle.id);
+        const article = { ...(old || incomingArticle), audio: { ...(old?.audio || {}), ...(incomingArticle.audio || {}), intensive: fullUrl, exam: fullUrl },
+          start: incomingArticle.start, end: incomingArticle.end, duration: incomingArticle.end - incomingArticle.start,
+          transcript: [...(old?.transcript || incomingArticle.transcript || [])],
+          questions: (old?.questions || []).map(question => ({ ...question, options: question.options.map(option => ({ ...option })) })) };
+        const rows = incomingArticle.transcript || [];
+        if (rows.length) {
+          const timed = validateIntensiveTranscript({ ...incomingArticle, audio: { intensive: fullUrl }, duration: article.duration }).length === 0;
+          if (timed || !article.transcript.length) article.transcript = rows.map(row => ({ ...row,
+            zh: row.zh || old?.transcript?.find(previous => previous.en === row.en)?.zh || '' }));
+          else article.transcript = article.transcript.map(row => ({ ...row,
+            zh: row.zh || rows.find(incoming => incoming.en === row.en)?.zh || '' }));
+        }
+        for (const key of ['text', 'translation', 'source', 'type']) if (!article[key] && incomingArticle[key]) article[key] = incomingArticle[key];
+        const questionMap = new Map(article.questions.map(question => [question.id, question]));
+        for (const question of incomingArticle.questions || []) {
+          const previous = questionMap.get(question.id);
+          if (!previous) {
+            const copy = { ...question, options: (question.options || []).map(option => ({ ...option })) };
+            article.questions.push(copy); questionMap.set(copy.id, copy);
+          } else for (const key of ['answer', 'explanation', 'audioUrl', 'start', 'end', 'audioTimeline'])
+            if ((previous[key] === undefined || previous[key] === '') && question[key] !== undefined) previous[key] = question[key];
+        }
+        article.questions.sort((left, right) => left.number - right.number);
+        staged.articles.push(article);
+      }
+      // Unlocated historical chapters retain their IDs and questions for
+      // reading/quiz history; no timestamp is fabricated for the new recording.
+      staged.articles.push(...(paper?.articles || []).filter(article => !ids.has(article.id)));
+      const located = staged.articles.filter(article => Number.isFinite(article.start) && Number.isFinite(article.end));
+      const mergedIssues = validatePaperTimeline({ ...staged, articles: located });
+      if (mergedIssues.length) {
+        mergedIssues.forEach(message => warning(warnings, 'INVALID_PAPER_TIMELINE', `${message}；整套录音与已有材料均未更改。`));
+        continue;
+      }
+      if (paper) papers[papers.indexOf(paper)] = staged; else papers.push(staged);
+      paperMap.set(staged.id, staged);
+      continue;
+    }
     if (!paper) {
       paper = { ...candidate, articles: [] };
       papers.push(paper);
@@ -573,8 +682,9 @@ export function mergePapers(existing = [], incoming = []) {
       warning(warnings, 'PAPER_ID_COLLISION', `试卷 ${candidate.id} 的年份、场次或校验标识冲突，未合并。`);
       continue;
     } else {
-      for (const key of ['year', 'session', 'source']) if (!paper[key] && candidate[key]) paper[key] = candidate[key];
+      for (const key of ['year', 'session', 'source', 'collection', 'kind', 'schemaVersion']) if (!paper[key] && candidate[key]) paper[key] = candidate[key];
     }
+    if(candidate.audio&&!paper.audio){paper.audio=candidate.audio;paper.duration=candidate.duration}
     const articleMap = new Map(paper.articles.map(article => [article.id, article]));
     for (const newArticle of candidate.articles) {
       if (!safeId(newArticle?.id)) { warning(warnings, 'INVALID_ARTICLE_ID', '跳过无效文章 ID。'); continue; }
@@ -603,8 +713,9 @@ export function mergePapers(existing = [], incoming = []) {
         }
         else article.transcript = article.transcript.map((row, index) => ({ ...row, zh: row.zh || newArticle.transcript[index]?.zh || '' }));
       }
+      for(const key of ['start','end'])if(article[key]===undefined&&newArticle[key]!==undefined)article[key]=newArticle[key];
       article.audio = { ...article.audio, ...Object.fromEntries(Object.entries(newArticle.audio || {}).filter(([, value]) => value)) };
-      for (const key of ['text', 'translation', 'source', 'type', 'duration']) if (!article[key] && newArticle[key]) article[key] = newArticle[key];
+      for (const key of ['text', 'translation', 'source', 'type', 'duration', 'start', 'end']) if (!article[key] && newArticle[key]) article[key] = newArticle[key];
       const questionMap = new Map(article.questions.map(question => [question.id, question]));
       for (const question of newArticle.questions || []) {
         const old = questionMap.get(question.id);

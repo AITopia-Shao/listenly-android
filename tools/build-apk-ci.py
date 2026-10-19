@@ -52,7 +52,7 @@ def build(args: argparse.Namespace) -> None:
         # Only the explicitly labelled second original suite may be bundled in
         # compatibility builds. Public release examples retain an empty library.
         validate_ci_suites(fixture, library)
-    allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg", "demo.json", "bundled-library.json")}
+    allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "paper-timeline.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg", "demo.json", "bundled-library.json")}
     for filename in ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md"):
         packaged = staged / 'assets' / 'web' / 'fonts' / filename
         source_font = ROOT / 'app' / 'src' / 'main' / 'assets' / 'web' / 'fonts' / filename

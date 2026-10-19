@@ -122,6 +122,23 @@ try{
   assert.ok(delivery.events.some(event=>event.type==='click'&&event.trusted&&event.matches),`One native tap delivers a trusted click to: ${selector}`);
   return tap;
  };
+ const collectionFor=paper=>paper.startsWith('cet6')?'cet6':paper.startsWith('listenly-original')?'original':'imported';
+ const enterPaperList=async collection=>{
+  await tapControl('[data-action=nav][data-route=library]');
+  await poll('document.querySelector(".collection-row")');
+  const available=await evaluate('[...document.querySelectorAll("[data-action=open-collection]")].map(b=>b.dataset.collection)');
+  assert.ok(['cet6','ielts','toefl'].every(id=>available.includes(id)),'The first library level exposes the three exam collections');
+  const selector=`[data-action=open-collection][data-collection="${collection}"]`;
+  await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);await tapControl(selector);
+  await poll('document.querySelector(".paper-group-row")');
+ };
+ const openNativeArticle=async(paper,article)=>{
+  await enterPaperList(collectionFor(paper));
+  const group=`[data-action=open-paper][data-paper="${paper}"]`,row=`[data-action=open][data-paper="${paper}"][data-article="${article}"]`;
+  await evaluate(`document.querySelector(${JSON.stringify(group)}).scrollIntoView({block:'center'})`);await tapControl(group);
+  await poll(`document.querySelector(${JSON.stringify(row)})`);await evaluate(`document.querySelector(${JSON.stringify(row)}).scrollIntoView({block:'center'})`);await tapControl(row);
+  await poll('document.querySelector(".practice-header")&&document.querySelector("#audio").readyState>=1');
+ };
  result.home=await poll('document.querySelector(".focus-card") && document.body.innerText');
  result.nativeSafeInsets=await waitNativeLayout(null,'initial-home');
  assert.ok(await evaluate('!!document.querySelector(".focus-card [data-action=open],.focus-card [data-action=import]")'),'Homepage has an actionable listening material entry');
@@ -212,13 +229,13 @@ try{
   const answers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
   const article=paper.articles.find(a=>(a.questions||[]).some(q=>!answers[JSON.stringify([paper.id,a.id,q.id])]?.submitted))||paper.articles[0];
   realSelection={paper,article};
-  await evaluate(`document.querySelector('[data-action=nav][data-route=library]').click();document.querySelector('[data-action=open-paper][data-paper="${paper.id}"]').click();document.querySelector('[data-action=open][data-paper="${paper.id}"][data-article="${article.id}"]').click()`);
+  await openNativeArticle(paper.id,article.id);
  }else if(publicDemo){
   const paper=JSON.parse(await readFile(path.resolve('examples/demo/demo.json'),'utf8')),answers=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
   const article=paper.articles.find(a=>(a.questions||[]).some(q=>!answers[JSON.stringify([paper.id,a.id,q.id])]?.submitted))||paper.articles[0];
   demoSelection={paper,article};
-  await evaluate(`document.querySelector('[data-action=nav][data-route=library]').click();document.querySelector('[data-action=open-paper][data-paper="${paper.id}"]').click();document.querySelector('[data-action=open][data-paper="${paper.id}"][data-article="${article.id}"]').click()`);
- }else await evaluate('document.querySelector("[data-action=nav][data-route=library]").click();document.querySelector("[data-action=open-paper][data-paper=listenly-original-ci]").click();document.querySelector("[data-action=open][data-paper=listenly-original-ci][data-article=ci-playback]").click()');
+  await openNativeArticle(paper.id,article.id);
+ }else await openNativeArticle('listenly-original-ci','ci-playback');
  assert.ok(await evaluate('!!document.querySelector("[data-mode=intensive][aria-pressed=true]")&&!!document.querySelector("[data-display=hidden][aria-pressed=true]")'),'Opening the reader defaults to intensive and hidden');
  assert.ok(await evaluate('!/[0-9]+\\s*[-–—~～至]\\s*[0-9]+\\s*题/.test(document.querySelector(".practice-title").innerText)'),'Native article titles omit their question range');
  assert.deepEqual(await evaluate('[...document.querySelectorAll(".display-controls [data-action=display]")].map(b=>b.dataset.display)'),['hidden','original','bilingual'],'Native text choices are ordered hidden, original, bilingual');
@@ -235,7 +252,7 @@ try{
  await poll('document.querySelector("#audio").readyState >= 1');
  result.audio=await evaluate('({duration:document.querySelector("#audio").duration,source:document.querySelector("#audio").currentSrc})');
  assert.ok(result.audio.duration>10,'Bundled native-served audio metadata decodes');
- if(publicDemo)assert.ok(result.audio.source.endsWith('/'+demoSelection.article.audio.intensive),'The selected original public demo recording is served');
+ if(publicDemo)assert.ok(result.audio.source.endsWith('/'+(demoSelection.paper.audio||demoSelection.article.audio.intensive)),'The selected complete public demo recording is served');
  {
   result.practiceGeometry=await evaluate('(()=>{var player=document.querySelector(".playback-card").getBoundingClientRect(),text=document.querySelector(".main-panel").getBoundingClientRect(),css=getComputedStyle(document.documentElement);var rect=r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height});return {width:innerWidth,height:innerHeight,safeTop:parseFloat(css.getPropertyValue("--safe-top"))||0,safeBottom:parseFloat(css.getPropertyValue("--safe-bottom"))||0,contentWidth:document.documentElement.scrollWidth,navCount:document.querySelectorAll(".bottom-nav").length,player:rect(player),text:rect(text),controls:[...document.querySelectorAll(".player-buttons button")].map(b=>({action:b.dataset.action,...rect(b.getBoundingClientRect())}))}})()');
   const geometry=result.practiceGeometry;
@@ -372,11 +389,21 @@ try{
  await poll('document.querySelector("[data-action=submit-article]")&&!document.querySelector("[data-action=submit-article]").disabled');
  await evaluate('document.querySelector("[data-action=submit-article]").scrollIntoView({block:"center"})');
  result.submitTap=await tapControl('[data-action=submit-article]');
- await poll('document.querySelector("[data-action=view-result]")&&document.querySelectorAll(".quiz-question.is-open").length===0');
+ await poll(`(()=>{var s=JSON.parse(localStorage.getItem('listenly.state.v1'));return ${JSON.stringify(qs.map(keyFor))}.every(key=>s.answers[key]&&s.answers[key].submitted)})()`);
  result.answer=await evaluate('JSON.parse(localStorage.getItem("listenly.state.v1")).answers');
  result.articleCompletionAfter=await evaluate(`JSON.parse(localStorage.getItem('listenly.state.v1')).articleCompletions[${JSON.stringify(completionKey)}]||null`);
  assert.equal(result.articleCompletionAfter?.count,(result.articleCompletionBefore?.count||0)+1,'Finishing the article credits exactly one complete article');
  for(const q of qs)assert.ok(result.answer[keyFor(q)]?.submitted,'One whole-article submission commits all question choices');
+ const following=interactionPaper.articles.slice(interactionPaper.articles.findIndex(article=>article.id===interactionArticle.id)+1).find(article=>article.questions?.length);
+ if(following&&Number.isFinite(following.start))await poll(`!document.querySelector('#audio').seeking&&Math.abs(document.querySelector('#audio').currentTime-${following.start})<.5`);
+ result.afterSubmission=await evaluate('(()=>{var s=JSON.parse(localStorage.getItem("listenly.state.v1")),a=document.querySelector("#audio");return {active:s.active,time:a.currentTime,source:a.currentSrc}})()');
+ if(following){
+  assert.equal(result.afterSubmission.active.article,following.id,'Completing a chapter opens the next chapter questions');
+  assert.equal(result.afterSubmission.source,result.audio.source,'Auto-advancing questions keeps the complete paper recording');
+  if(Number.isFinite(following.start))assert.ok(Math.abs(result.afterSubmission.time-following.start)<.5,'Auto-advancing questions uses the next chapter absolute marker');
+ }
+ // Review the completed chapter without resetting or resubmitting any answer.
+ await openNativeArticle(interactionPaper.id,interactionArticle.id);await tapControl('[data-action=mode][data-mode=exam]');await poll('document.querySelector(".quiz-card")');
  for(const chosen of result.articleChoices){
   const q=qs[chosen.index],key=keyFor(q);
   assert.equal(result.answer[key].choice,chosen.choice,'The selected choice is retained after grading');
@@ -408,18 +435,28 @@ try{
  const savedHomeExpression='(()=>{var s=JSON.parse(localStorage.getItem("listenly.state.v1"));return {selectedPaper:s.selectedPaper,homeFocus:s.homeFocus||null}})()';
  const homeSnapshotExpression='(()=>{var s=JSON.parse(localStorage.getItem("listenly.state.v1")),b=document.querySelector(".focus-play");return {selectedPaper:s.selectedPaper,homeFocus:s.homeFocus||null,hero:{paper:b.dataset.paper,article:b.dataset.article}}})()';
  const homeBeforePreview=await evaluate(homeSnapshotExpression);
- await tapControl('[data-action=nav][data-route=library]');
- await poll('document.querySelector(".paper-group-row")');
+ await enterPaperList(collectionFor(homeBeforePreview.selectedPaper));
  assert.equal(await evaluate('document.querySelectorAll(".theme-control button,[data-action=import]").length'),0,'The library paper directory has no appearance or import controls');
- assert.equal(await evaluate('document.querySelectorAll("#library-list [data-action=open]").length'),0,'Library first level lists papers instead of individual articles');
+ assert.equal(await evaluate('document.querySelectorAll("#library-list [data-action=open]").length'),0,'The selected exam collection lists papers before individual article markers');
  result.filterTap=await tapControl('[data-action=filter-menu][data-filter=year]');
  await poll('document.querySelector(".filter-popover")');
  assert.ok(await evaluate('document.querySelectorAll(".filter-popover [data-action=set-filter]").length>0'),'Year filter provides explicit choices');
  run(['shell','input','keyevent','4']);
  await poll('!document.querySelector(".filter-popover")&&document.querySelector(".paper-group-row")');
- const paperProbe=await evaluate(`(()=>{var rows=[...document.querySelectorAll('[data-action=open-paper]')],other=rows.find(b=>b.dataset.paper!==${JSON.stringify(homeBeforePreview.selectedPaper)});return (other||rows[0]).dataset.paper})()`);
- const paperDirectoryCount=await evaluate('document.querySelectorAll("[data-action=open-paper]").length');
- if(!publicDemo)assert.ok(paperDirectoryCount>=2,'The compatibility and real-library checks require two distinct paper suites');
+ let visiblePaperIds=await evaluate('[...document.querySelectorAll("[data-action=open-paper]")].map(b=>b.dataset.paper)');
+ const observedPaperIds=new Set(visiblePaperIds);
+ // Lite contains one CET suite and the original example in another collection.
+ // Count and exercise actual rows across those collections, rather than
+ // assuming two suites must share an exam category.
+ if(!publicDemo&&visiblePaperIds.length<2){
+  await enterPaperList(collectionFor(homeBeforePreview.selectedPaper)==='cet6'?'original':'cet6');
+  visiblePaperIds=await evaluate('[...document.querySelectorAll("[data-action=open-paper]")].map(b=>b.dataset.paper)');
+  visiblePaperIds.forEach(id=>observedPaperIds.add(id));
+ }
+ const paperProbe=visiblePaperIds.find(id=>id!==homeBeforePreview.selectedPaper)||visiblePaperIds[0];
+ const paperDirectoryCount=observedPaperIds.size;
+ result.libraryObservedSuites=[...observedPaperIds];
+ if(!publicDemo)assert.ok(paperDirectoryCount>=2,'The compatibility and real-library checks require two distinct paper suites across collections');
  if(paperDirectoryCount>1)assert.notEqual(paperProbe,homeBeforePreview.selectedPaper,'The preview must open a different suite from the selected home collection');
  const paperOpenSelector=`[data-action=open-paper][data-paper="${paperProbe}"]`;
  await evaluate(`document.querySelector(${JSON.stringify(paperOpenSelector)}).scrollIntoView({block:'center'})`);await tapControl(paperOpenSelector);
@@ -437,7 +474,7 @@ try{
  const homeAfterPreview=await evaluate(homeSnapshotExpression);
  assert.deepEqual(homeAfterPreview,homeBeforePreview,'Returning home after a paper and article preview preserves the chosen suite and pinned article');
  result.libraryPreview={paper:paperProbe,article:previewArticle.article,alternatePaper:paperProbe!==homeBeforePreview.selectedPaper,before:homeBeforePreview,afterPaper:selectionAfterPaperPreview,afterArticle:selectionAfterArticlePreview,homeAfter:homeAfterPreview};
- await tapControl('[data-action=nav][data-route=library]');await poll('document.querySelector(".paper-group-row")');
+ await enterPaperList(collectionFor(paperProbe));
  await evaluate(`document.querySelector(${JSON.stringify(paperOpenSelector)}).scrollIntoView({block:'center'})`);await tapControl(paperOpenSelector);
  await poll('document.querySelector(".library-paper-row .row-play[data-action=material-play]")');
  const materialPlaySelector=`.library-paper-row .row-play[data-action=material-play][data-paper="${previewArticle.paper}"][data-article="${previewArticle.article}"]`;
@@ -449,12 +486,14 @@ try{
  result.libraryPlayHome=await evaluate(homeSnapshotExpression);
  assert.deepEqual(result.libraryPlayHome.hero,previewArticle,'Actually playing a library article selects its paper and pins that article on home');
  assert.equal(result.libraryPlayHome.selectedPaper,previewArticle.paper,'Library playback persists the chosen suite');
- await tapControl('[data-action=nav][data-route=library]');await poll('document.querySelector(".paper-group-row")');
+ await enterPaperList(collectionFor(paperProbe));
  await evaluate(`document.querySelector(${JSON.stringify(paperOpenSelector)}).scrollIntoView({block:'center'})`);await tapControl(paperOpenSelector);
  await poll('document.querySelector("[data-action=library-back]")');
  run(['shell','input','keyevent','4']);
- await poll('document.querySelector(".paper-group-row")&&!document.querySelector("[data-action=library-back]")');
- const circlePaper=await evaluate(`(()=>{var rows=[...document.querySelectorAll('[data-action=select-paper]')],other=rows.find(b=>b.dataset.paper!==${JSON.stringify(previewArticle.paper)});return (other||rows[0]).dataset.paper})()`);
+ await poll('document.querySelector(".paper-group-row")&&document.querySelector("[data-action=library-back]")');
+ let circlePaper=await evaluate(`(()=>{var rows=[...document.querySelectorAll('[data-action=select-paper]')],other=rows.find(b=>b.dataset.paper!==${JSON.stringify(previewArticle.paper)});return other?other.dataset.paper:null})()`);
+ if(!circlePaper&&paperDirectoryCount>1){await enterPaperList(collectionFor(homeBeforePreview.selectedPaper));circlePaper=await evaluate(`(()=>{var rows=[...document.querySelectorAll('[data-action=select-paper]')];return rows.find(b=>b.dataset.paper!==${JSON.stringify(previewArticle.paper)}).dataset.paper})()`)}
+ if(!circlePaper)circlePaper=previewArticle.paper;
  const selectionBefore=await evaluate(`(()=>{var button=document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]');window.__paperSelectionButton=button;window.__paperSelectionRow=button.closest('.paper-group-row');return {paper:JSON.parse(localStorage.getItem('listenly.state.v1')).selectedPaper,pressed:button.getAttribute('aria-pressed')==='true'}})()`);
  if(paperDirectoryCount>1){assert.notEqual(circlePaper,selectionBefore.paper,'The right-hand selection test must genuinely choose a different suite');assert.equal(selectionBefore.pressed,false,'The suite was not selected before the native touch')}
  await evaluate(`document.querySelector('[data-action=select-paper][data-paper="${circlePaper}"]').scrollIntoView({block:'center'})`);

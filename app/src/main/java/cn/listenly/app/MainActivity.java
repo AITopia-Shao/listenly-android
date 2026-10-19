@@ -6,13 +6,16 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
+import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
 import android.view.View;
+import android.view.Display;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -74,7 +77,13 @@ public final class MainActivity extends Activity {
     private Object backCallback;
     private final StringBuilder startupWarnings = new StringBuilder();
     private float insetTop, insetBottom, insetLeft, insetRight;
+    private float sentInsetTop, sentInsetBottom, sentInsetLeft, sentInsetRight;
+    private boolean insetsSent;
     private boolean darkTheme;
+    private boolean windowThemeApplied, appliedDarkTheme;
+    private WebView themedWebView, frameRateView;
+    private boolean webViewDarkTheme;
+    private float requestedViewFrameRate, requestedWindowFrameRate;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -95,9 +104,12 @@ public final class MainActivity extends Activity {
         webView = null;
         try {
         webView = new WebView(this);
+        insetsSent = false;
         webView.setVerticalScrollBarEnabled(false);
         webView.setHorizontalScrollBarEnabled(false);
         webView.setBackgroundColor(darkTheme ? Color.BLACK : Color.rgb(250, 250, 250));
+        themedWebView = webView;
+        webViewDarkTheme = darkTheme;
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -121,7 +133,7 @@ public final class MainActivity extends Activity {
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 return serve(request.getUrl(), request.getRequestHeaders(), request.getMethod());
             }
-            @Override public void onPageFinished(WebView view, String url) { pushInsets(); }
+            @Override public void onPageFinished(WebView view, String url) { pushInsets(true); }
             @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 boolean current = view == webView;
                 if (current) webView = null;
@@ -166,6 +178,7 @@ public final class MainActivity extends Activity {
         });
         setContentView(webView);
         webView.requestApplyInsets();
+        requestHighRefreshRateSafely();
         webView.loadUrl(START);
         } catch (RuntimeException | LinkageError failure) {
             showNativeFailure("系统网页组件未能启动", failure);
@@ -199,6 +212,8 @@ public final class MainActivity extends Activity {
 
     private void disposeWebView(WebView view) {
         if (view == null) return;
+        if (themedWebView == view) themedWebView = null;
+        if (frameRateView == view) { frameRateView = null; requestedViewFrameRate = 0; }
         try {
             if (view.getParent() instanceof ViewGroup) ((ViewGroup) view.getParent()).removeView(view);
             view.removeJavascriptInterface("Android");
@@ -287,21 +302,147 @@ public final class MainActivity extends Activity {
             // PhoneWindow.getInsetsController() dereferences mDecor on API 30.
             // onCreate runs before setContentView, so create the decor first.
             getWindow().getDecorView();
-            WindowInsetsController controller = getWindow().getInsetsController();
-            if (controller != null) controller.setSystemBarsAppearance(darkTheme ? 0 :
-                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
-                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
         } else {
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                    (darkTheme ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR));
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
         }
-        getWindow().getDecorView().setBackgroundColor(darkTheme ? Color.BLACK : Color.rgb(250, 250, 250));
+        windowThemeApplied = false;
+        applyNativeThemeSafely();
     }
 
-    private void pushInsets() {
+    /** Theme changes never reapply edge-to-edge, cutout or window geometry. */
+    @SuppressWarnings("deprecation") private void applyNativeThemeSafely() {
+        try {
+            if (!windowThemeApplied || appliedDarkTheme != darkTheme) {
+                View decor = getWindow().getDecorView();
+                boolean appearanceReady = true;
+                if (Build.VERSION.SDK_INT >= 30) {
+                    WindowInsetsController controller = getWindow().getInsetsController();
+                    if (controller != null) {
+                        int mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
+                                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                        int appearance = darkTheme ? 0 : mask;
+                        if ((controller.getSystemBarsAppearance() & mask) != appearance)
+                            controller.setSystemBarsAppearance(appearance, mask);
+                    } else appearanceReady = false;
+                } else {
+                    int mask = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                    int current = decor.getSystemUiVisibility();
+                    int appearance = (current & ~mask) | (darkTheme ? 0 : mask);
+                    if (current != appearance) decor.setSystemUiVisibility(appearance);
+                }
+                int color = darkTheme ? Color.BLACK : Color.rgb(250, 250, 250);
+                if (!(decor.getBackground() instanceof ColorDrawable) ||
+                        ((ColorDrawable) decor.getBackground()).getColor() != color)
+                    decor.setBackgroundColor(color);
+                appliedDarkTheme = darkTheme;
+                windowThemeApplied = appearanceReady;
+            }
+            if (webView != null && (themedWebView != webView || webViewDarkTheme != darkTheme)) {
+                webView.setBackgroundColor(darkTheme ? Color.BLACK : Color.rgb(250, 250, 250));
+                themedWebView = webView;
+                webViewDarkTheme = darkTheme;
+            }
+        } catch (RuntimeException | LinkageError failure) {
+            windowThemeApplied = false;
+            noteCompatibilityFailure("系统栏外观更新", failure);
+        }
+    }
+
+    /** Supported, same-resolution hints only; the OS still owns presentation. */
+    @SuppressWarnings("deprecation") private void requestHighRefreshRateSafely() {
+        try {
+            Display display = webView == null ? null : webView.getDisplay();
+            if (display == null) display = getWindowManager().getDefaultDisplay();
+            if (display == null) return;
+            Display.Mode current = display.getMode();
+            Display.Mode[] supported = display.getSupportedModes();
+            int[] widths = new int[supported.length], heights = new int[supported.length];
+            float[] rates = new float[supported.length];
+            for (int i = 0; i < supported.length; i++) {
+                widths[i] = supported[i].getPhysicalWidth();
+                heights[i] = supported[i].getPhysicalHeight();
+                rates[i] = supported[i].getRefreshRate();
+            }
+            float rate = RefreshRatePolicy.choose(current.getPhysicalWidth(), current.getPhysicalHeight(), widths, heights, rates);
+            WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            if (rate <= 0) {
+                // A resumed or resized Activity may now be on a 60 Hz-only
+                // display. Clear only hints installed by this host.
+                if (requestedWindowFrameRate > 0) {
+                    if (attributes.preferredDisplayModeId == 0 &&
+                            Math.abs(attributes.preferredRefreshRate - requestedWindowFrameRate) < .01f) {
+                        attributes.preferredRefreshRate = 0;
+                        getWindow().setAttributes(attributes);
+                    }
+                    requestedWindowFrameRate = 0;
+                }
+                if (Build.VERSION.SDK_INT >= 35 && frameRateView == webView && requestedViewFrameRate > 0) {
+                    ModernFrameRate.clear(webView);
+                    frameRateView = null;
+                    requestedViewFrameRate = 0;
+                }
+                return;
+            }
+            // A rate preference avoids selecting a mode ID that can change
+            // resolution or force a non-seamless switch on modern Android.
+            if (attributes.preferredDisplayModeId == 0 && Math.abs(attributes.preferredRefreshRate - rate) > .01f) {
+                attributes.preferredRefreshRate = rate;
+                getWindow().setAttributes(attributes);
+                requestedWindowFrameRate = rate;
+            }
+            if (Build.VERSION.SDK_INT >= 35 && webView != null &&
+                    (frameRateView != webView || Math.abs(requestedViewFrameRate - rate) > .01f)) {
+                ModernFrameRate.request(webView, rate);
+                frameRateView = webView;
+                requestedViewFrameRate = rate;
+            }
+        } catch (RuntimeException | LinkageError failure) {
+            noteCompatibilityFailure("高刷新率偏好", failure);
+        }
+    }
+
+    /** Pure policy kept independent of Android objects for host-JVM tests. */
+    static final class RefreshRatePolicy {
+        static float choose(int width, int height, int[] widths, int[] heights, float[] rates) {
+            if (width <= 0 || height <= 0 || widths == null || heights == null || rates == null) return 0;
+            float best = 0, distance = Float.MAX_VALUE;
+            int count = Math.min(rates.length, Math.min(widths.length, heights.length));
+            for (int i = 0; i < count; i++) {
+                float rate = rates[i];
+                if (widths[i] != width || heights[i] != height || !Float.isFinite(rate) || rate <= 60.5f) continue;
+                float next = Math.abs(rate - 120);
+                if (next < distance || (next == distance && rate > best)) {
+                    best = rate;
+                    distance = next;
+                }
+            }
+            return best;
+        }
+    }
+
+    /** Isolate the API 35 method from verification on older Android releases. */
+    private static final class ModernFrameRate {
+        static void request(View view, float rate) { view.setRequestedFrameRate(rate); }
+        static void clear(View view) { view.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT); }
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        requestHighRefreshRateSafely();
+    }
+
+    @Override public void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        requestHighRefreshRateSafely();
+    }
+
+    private void pushInsets() { pushInsets(false); }
+
+    private void pushInsets(boolean force) {
         if (webView == null) return;
+        if (!force && insetsSent && insetTop == sentInsetTop && insetBottom == sentInsetBottom &&
+                insetLeft == sentInsetLeft && insetRight == sentInsetRight) return;
         String[] names = {"top", "bottom", "left", "right"};
         float[] values = {insetTop, insetBottom, insetLeft, insetRight};
         JSONObject detail = new JSONObject();
@@ -315,6 +456,9 @@ public final class MainActivity extends Activity {
             js.append("window.dispatchEvent(new CustomEvent('listenly-insets',{detail:")
                     .append(detail).append("}));})();");
             webView.evaluateJavascript(js.toString(), null);
+            insetsSent = true;
+            sentInsetTop = insetTop; sentInsetBottom = insetBottom;
+            sentInsetLeft = insetLeft; sentInsetRight = insetRight;
         } catch (JSONException ignored) { }
         catch (RuntimeException | LinkageError failure) { noteCompatibilityFailure("安全区域同步", failure); }
     }
@@ -332,10 +476,12 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public void setTheme(String theme) {
             if (!"light".equals(theme) && !"dark".equals(theme)) return;
             runOnUiThread(() -> {
-                darkTheme = "dark".equals(theme);
-                getSharedPreferences("listenly.preferences", MODE_PRIVATE).edit().putString("theme", theme).apply();
-                configureWindowSafely();
-                if (webView != null) webView.setBackgroundColor(darkTheme ? Color.BLACK : Color.rgb(250, 250, 250));
+                boolean requestedDark = "dark".equals(theme);
+                if (darkTheme != requestedDark) {
+                    darkTheme = requestedDark;
+                    getSharedPreferences("listenly.preferences", MODE_PRIVATE).edit().putString("theme", theme).apply();
+                }
+                applyNativeThemeSafely();
             });
         }
 

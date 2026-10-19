@@ -139,7 +139,7 @@ export async function verifyReaderScrollAndArticleMenu(page){
  const questions=[{id:'long-question',number:1,prompt:'Which answer describes the reading exercise?',options:['A','B','C','D'].map(id=>({id,text:`Option ${id}. ${'This original option is intentionally long to exercise scrolling on a phone. '.repeat(7)}`})),answer:'D'}, {id:'short-question',number:2,prompt:'Choose the next answer.',options:['A','B','C','D'].map(id=>({id,text:`Answer ${id}`})),answer:'A'}];
  await page.evaluate(({transcript,questions})=>window.dispatchEvent(new CustomEvent('listenly-import',{detail:{mode:'intensive',name:'原创滚动测试',files:[
   {path:'paper-layout-scroll/paper.json',text:JSON.stringify({id:'paper-layout-scroll',title:'Original reader test',articles:[{id:'long',title:'Reader scroll verification',audio:{intensive:'long/audio.wav',exam:'long/audio.wav'},transcript:'long/transcript.json',questions:'long/questions.json'}]})},
-  {path:'paper-layout-scroll/long/audio.wav',url:'media/morning.wav'},
+  {path:'paper-layout-scroll/long/audio.wav',url:'media/original-suite.wav'},
   {path:'paper-layout-scroll/long/transcript.json',text:JSON.stringify(transcript)},
   {path:'paper-layout-scroll/long/questions.json',text:JSON.stringify(questions)}
  ]}})),{transcript,questions});
@@ -207,15 +207,9 @@ export async function verifyReaderScrollAndArticleMenu(page){
  assert.equal(await firstToggle.getAttribute('aria-expanded'),'true','choosing another answer leaves the expanded long options intact');
  assert.equal(await submit.isDisabled(),false,'all selected answers enable whole-article submission');
  await submit.scrollIntoViewIfNeeded();
- const submitTop=await page.locator('.main-panel').evaluate(panel=>panel.scrollTop);
  await submit.click();
- await page.waitForFunction(()=>[...document.querySelectorAll('.question-options-wrap')].every(wrap=>wrap.getBoundingClientRect().height<1));
- const submittedScroll=await page.locator('.main-panel').evaluate(panel=>({top:panel.scrollTop,max:panel.scrollHeight-panel.clientHeight}));
- assert.ok(Math.abs(submittedScroll.top-Math.min(submitTop,submittedScroll.max))<2,'submission retains the article position within the new bounds after expanded options close');
- assert.equal(await page.locator('[data-action="toggle-question"][aria-expanded="true"]').count(),0,'whole-article submission closes every independently expanded answer list');
- assert.equal(await page.locator('[data-action="view-result"]').evaluate(button=>button===document.activeElement),true,'submission places keyboard focus on the result action without scrolling it');
- assert.equal(await page.locator('.quiz-question').count(),2,'submitting keeps the complete article answer sheet on screen');
- await page.locator('[data-action="view-result"]').click();
+ await page.locator('.result-card').waitFor();
+ assert.equal(await page.locator('[data-action="toggle-question"][aria-expanded="true"]').count(),0,'finishing the last article closes every answer dropdown and opens its result');
  assert.match(await page.locator('.result-card').innerText(),/本篇完成\s+2\s*\/\s*2/,'results include every question submitted together');
  await navigateToLibrary(page);
  await openLibraryArticle(page,'listenly-original','morning');

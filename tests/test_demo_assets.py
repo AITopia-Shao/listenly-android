@@ -40,12 +40,13 @@ class PublicDemoAssetTests(unittest.TestCase):
     def test_original_audio_and_sentence_timestamps_are_complete(self):
         demo, recordings = assets.original_example_files()
         self.assertEqual(len(demo["articles"]), 2)
-        self.assertEqual(len(recordings), 2)
+        self.assertEqual(len(recordings), 1)
         self.assertEqual(sum(len(article["questions"]) for article in demo["articles"]), 5)
         for article in demo["articles"]:
             with wave.open(str(ROOT / "examples" / "demo" / article["audio"]["intensive"]), "rb") as audio:
                 duration = audio.getnframes() / audio.getframerate()
-            self.assertAlmostEqual(article["duration"], duration, delta=0.7)
+            self.assertAlmostEqual(article["end"]-article["start"], article["duration"], delta=.001)
+            self.assertLessEqual(article["end"],duration+.01)
             starts = [row["start"] for row in article["transcript"]]
             self.assertEqual(starts, sorted(starts))
             self.assertLess(starts[-1], duration)
@@ -60,7 +61,7 @@ class PublicDemoAssetTests(unittest.TestCase):
             assets.prepare(output)
             web = output / "assets" / "web"
             actual = {path.relative_to(web).as_posix() for path in web.rglob("*") if path.is_file()}
-            expected = set(assets.WEB_FILES) | {"app.compat.js", "demo.json", "bundled-library.json", "media/morning.wav", "media/library.wav"}
+            expected = set(assets.WEB_FILES) | {"app.compat.js", "demo.json", "bundled-library.json", "media/original-suite.wav"}
             for filename in assets.FONT_FILES:
                 expected.add(f'fonts/{filename}')
                 self.assertEqual((web / 'fonts' / filename).read_bytes(), (ROOT / 'app' / 'src' / 'main' / 'assets' / 'web' / 'fonts' / filename).read_bytes())

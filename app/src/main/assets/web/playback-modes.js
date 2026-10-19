@@ -1,7 +1,7 @@
 /** Playback stays within the current paper and ignores passages without audio. */
 export const playbackModes=Object.freeze([
   Object.freeze({id:'sequential',label:'顺序播放',icon:'queue'}),
-  Object.freeze({id:'repeat',label:'单篇循环',icon:'repeatone'}),
+  Object.freeze({id:'repeat',label:'整套循环',icon:'repeatone'}),
   Object.freeze({id:'shuffle',label:'随机播放',icon:'shuffle'})
 ]);
 

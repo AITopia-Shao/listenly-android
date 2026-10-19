@@ -52,6 +52,8 @@ try{
  assert.ok(Math.abs(await page.locator('#audio').evaluate(a=>a.currentTime)-12)<.4,'same article progress aligned');
  assert.equal(await page.locator('.quiz-question').count(),3,'one article displays all three question rows');
  await choose(0,'B');await choose(1,'D');await choose(2,'C');await click('[data-action="submit-article"]');
+ assert.match(await page.locator('.practice-title').innerText(),/little library/,'submission automatically advances to the next article');
+ await click('[data-action="nav"][data-route="library"]');await openLibraryArticle(page,'listenly-original','morning');await click('[data-action="mode"][data-mode="exam"]');
  await openQuestion(0);assert.match(await page.locator('.quiz-question[data-question-index="0"] .question-feedback').innerText(),/答对了/);
  await page.screenshot({path:path.join(output,'quiz-phone.png'),fullPage:true});
  await click('[data-action="mode"][data-mode="intensive"]');
@@ -72,13 +74,13 @@ try{
  // A genuine directory-selection import; its nested paths must survive IndexedDB restoration.
  const fixture=path.join(root,'.build/ui-fixture');
  const material=path.join(fixture,'paper-ui','article-ui');await mkdir(material,{recursive:true});
- await writeFile(path.join(fixture,'paper-ui','paper.json'),JSON.stringify({id:'paper-ui',title:'UI导入验证',year:2025,articles:[{id:'article-ui',title:'Import and restart',audio:{intensive:'article-ui/audio.wav'},transcript:'article-ui/transcript.json',questions:'article-ui/questions.json'}]}));
+ await writeFile(path.join(fixture,'paper-ui','paper.json'),JSON.stringify({id:'paper-ui',title:'UI导入验证',year:2025,schemaVersion:2,audio:'article-ui/audio.wav',duration:69.58403628117914,articles:[{start:0,end:69.58403628117914,id:'article-ui',title:'Import and restart',audio:{intensive:'article-ui/audio.wav'},transcript:'article-ui/transcript.json',questions:'article-ui/questions.json'}]}));
  await writeFile(path.join(material,'transcript.json'),JSON.stringify([{start:0,en:'Original imported sentence.',zh:'导入原文。'}]));
  await writeFile(path.join(material,'questions.json'),JSON.stringify([{id:'q1',number:1,prompt:'Imported question?',options:[{id:'A',text:'One'},{id:'B',text:'Two'},{id:'C',text:'Three'},{id:'D',text:'Four'}],answer:'A'}]));
- await copyFile(path.join(webRoot,'media/morning.wav'),path.join(material,'audio.wav'));
+ await copyFile(path.resolve('examples/demo/media/original-suite.wav'),path.join(material,'audio.wav'));
  await click('[data-action="nav"][data-route="library"]');
  await page.locator('#folder-input').setInputFiles(fixture);
- await page.locator('[data-action="open-paper"][data-paper="paper-ui"]').waitFor();
+ await enterLibraryPaper(page,'paper-ui');
  await page.reload();await page.locator('.focus-card').waitFor();
  await click('[data-action="nav"][data-route="library"]');
  await openLibraryArticle(page,'paper-ui','article-ui');
@@ -88,26 +90,18 @@ try{
  await click('[data-action="display"][data-display="bilingual"]');
  assert.match(await page.locator('.transcript-card').innerText(),/Original imported sentence/);
  // Import a second mode and confirm one aligned article rather than duplicate papers.
- await page.evaluate(()=>window.dispatchEvent(new CustomEvent('listenly-import',{detail:{mode:'exam',name:'做题',files:[{path:'paper-ui/paper.json',text:JSON.stringify({id:'paper-ui',title:'UI导入验证',articles:[{id:'article-ui',title:'Import and restart',audio:{exam:'article-ui/audio.wav'},questions:'article-ui/questions.json'}]})},{path:'paper-ui/article-ui/audio.wav',url:'media/morning.wav'},{path:'paper-ui/article-ui/questions.json',text:JSON.stringify([{id:'q1',number:1,prompt:'Imported question?',options:[{id:'A',text:'One'},{id:'B',text:'Two'},{id:'C',text:'Three'},{id:'D',text:'Four'}],answer:'A'}])}]}})));
+ await page.evaluate(()=>window.dispatchEvent(new CustomEvent('listenly-import',{detail:{mode:'exam',name:'做题',files:[{path:'paper-ui/paper.json',text:JSON.stringify({id:'paper-ui',title:'UI导入验证',schemaVersion:2,audio:'article-ui/audio.wav',duration:69.58403628117914,articles:[{start:0,end:69.58403628117914,id:'article-ui',title:'Import and restart',audio:{exam:'article-ui/audio.wav'},questions:'article-ui/questions.json'}]})},{path:'paper-ui/article-ui/audio.wav',url:'media/original-suite.wav'},{path:'paper-ui/article-ui/questions.json',text:JSON.stringify([{id:'q1',number:1,prompt:'Imported question?',options:[{id:'A',text:'One'},{id:'B',text:'Two'},{id:'C',text:'Three'},{id:'D',text:'Four'}],answer:'A'}])}]}})));
  await page.waitForTimeout(200);await click('[data-action="nav"][data-route="library"]');
  await enterLibraryPaper(page,'paper-ui');
  assert.equal(await page.locator('[data-action="open"][data-paper="paper-ui"]').count(),1,'both modes merge into one article');
- // Exercise the real noncontiguous question clip: passage context + question prompt.
+ // Private builds additionally exercise an authored real exam timeline.
  const bundled=JSON.parse(await readFile(path.join(webRoot,'bundled-library.json'),'utf8'));
- const timed=bundled.papers.find(p=>p.id==='cet6-2013-06-set2');
- const passage=timed?.articles.find(a=>a.questions.some(q=>q.audioTimeline?.length>1));
+ const timed=bundled.papers.find(p=>p.audio&&p.articles.some(a=>Number.isFinite(a.start)&&a.questions?.length));
+ const passage=timed?.articles.find(a=>Number.isFinite(a.start)&&a.questions?.length);
  if(passage){
-   await openLibraryArticle(page,timed.id,passage.id);
-   await click('[data-action="mode"][data-mode="intensive"]');
-   await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
-   const question=passage.questions[0],segment=question.audioTimeline[1];
-   await page.locator('#audio').evaluate((a,t)=>a.currentTime=t,segment.articleStart+1);
-   await click('[data-action="mode"][data-mode="exam"]');
-   await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
-   assert.ok(Math.abs(await page.locator('#audio').evaluate(a=>a.currentTime)-(segment.clipStart+1))<.4,'real question prompt maps from full article');
-   await click('[data-action="mode"][data-mode="intensive"]');
-   await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
-   assert.ok(Math.abs(await page.locator('#audio').evaluate(a=>a.currentTime)-(segment.articleStart+1))<.4,'real sliced question maps back to article');
+   await openLibraryArticle(page,timed.id,passage.id);await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
+   const target=passage.start+Math.min(1,(passage.end-passage.start)/2);await page.locator('#audio').evaluate((a,t)=>a.currentTime=t,target);await page.waitForFunction(()=>!document.querySelector('#audio').seeking);const source=await page.locator('#audio').evaluate(a=>a.currentSrc);
+   for(const mode of ['exam','intensive']){await click(`[data-action="mode"][data-mode="${mode}"]`);assert.equal(await page.locator('#audio').evaluate(a=>a.currentSrc),source);assert.ok(Math.abs(await page.locator('#audio').evaluate(a=>a.currentTime)-target)<.4,'real exam modes preserve the absolute full-paper clock')}
  }
  for(const viewport of [{width:360,height:800},{width:393,height:873},{width:430,height:932},{width:1280,height:900}]){
    await page.setViewportSize(viewport);await page.waitForTimeout(100);

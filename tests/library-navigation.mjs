@@ -2,13 +2,18 @@
 // explicit selection action, while playback has its own material-play control.
 export async function enterLibraryPaper(page,paper){
  const group=page.locator(`[data-action="open-paper"][data-paper="${paper}"]`);
- if(await group.count()){await group.first().click();return}
- if(await page.locator(`#library-list [data-action="open"][data-paper="${paper}"]`).count())return;
- const back=page.locator('[data-action="library-back"]');
- if(await back.count())await back.first().click();
- // An IndexedDB-backed import may still be finishing when the root is shown.
- await group.first().waitFor();
- await group.first().click();
+ const tried=new Set(),preferred=paper.startsWith('cet6')?'cet6':paper.startsWith('ielts')?'ielts':paper.startsWith('toefl')?'toefl':paper.startsWith('listenly-original')?'original':'imported';
+ for(let attempt=0;attempt<12;attempt++){
+  if(await group.count()){await group.first().click();return}
+  if(await page.locator(`#library-list [data-action="open"][data-paper="${paper}"]`).count())return;
+  const back=page.locator('[data-action="library-back"]');
+  if(await back.count()&&!await page.locator('[data-action="open-collection"]').count()){await back.first().click();continue}
+  const ids=await page.locator('[data-action="open-collection"]').evaluateAll(rows=>rows.map(row=>row.dataset.collection));
+  const collection=(!tried.has(preferred)&&ids.includes(preferred)?preferred:ids.find(id=>!tried.has(id)));
+  if(collection){tried.add(collection);await page.locator(`[data-action="open-collection"][data-collection="${collection}"]`).click()}
+  else{tried.clear();await page.waitForTimeout(150)}
+ }
+ await group.first().waitFor();await group.first().click();
 }
 
 export async function openLibraryArticle(page,paper,article){

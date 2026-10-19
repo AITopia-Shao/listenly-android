@@ -11,10 +11,10 @@
       "id": "morning",
       "title": "A small change, a better morning",
       "type": "短文",
-      "duration": 34.412,
+      "duration": 34.41215419501134,
       "audio": {
-        "intensive": "media/morning.wav",
-        "exam": "media/morning.wav"
+        "intensive": "media/original-suite.wav",
+        "exam": "media/original-suite.wav"
       },
       "transcript": [
         {
@@ -130,16 +130,18 @@
           "answer": "C",
           "explanation": "文章直接说 it gave her ten quiet minutes to start the day，强调更平静地开始一天。"
         }
-      ]
+      ],
+      "start": 0,
+      "end": 34.41215419501134
     },
     {
       "id": "library",
       "title": "The little library on the corner",
       "type": "短文",
-      "duration": 35.172,
+      "duration": 35.1718820861678,
       "audio": {
-        "intensive": "media/library.wav",
-        "exam": "media/library.wav"
+        "intensive": "media/original-suite.wav",
+        "exam": "media/original-suite.wav"
       },
       "transcript": [
         {
@@ -230,7 +232,16 @@
           "answer": "A",
           "explanation": "more books than it did on its first day 表明书的数量增加了。"
         }
-      ]
+      ],
+      "start": 34.41215419501134,
+      "end": 69.58403628117914
     }
-  ]
+  ],
+  "schemaVersion": 2,
+  "audio": "media/original-suite.wav",
+  "duration": 69.58403628117914,
+  "collection": {
+    "id": "original",
+    "title": "原创合集"
+  }
 }

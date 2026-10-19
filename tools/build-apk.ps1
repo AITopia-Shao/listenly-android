@@ -127,7 +127,7 @@ foreach ($taskSource in Get-ChildItem -LiteralPath $taskMainSource -File -Recurs
     $taskRelative = $taskSource.FullName.Substring($taskMainSource.Length + 1)
     if ($taskSource.Name -match '\.fingerprint$|^\..*tmp$|\.tmp$' -or $taskRelative -match '(?:^|[\\/])\.?cache[\\/]') { continue }
     if ($taskSource.Name -match $taskAudioPattern -and !$taskKeepAudio.Contains($taskSource.FullName)) {
-        if ($Lite -or $taskSource.FullName.StartsWith($taskCorpusPrefix,[StringComparison]::OrdinalIgnoreCase)) { continue }
+        continue
     }
     $taskDestination = Join-Path (Join-Path $taskBuild 'main') $taskRelative
     New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName($taskDestination)) | Out-Null
@@ -140,16 +140,9 @@ if ($Lite) {
 # The two user-supplied wallpapers remain in a local build cache. Public demo
 # assets always retain the original vector backgrounds shipped in the repo.
 $taskWallpaperCache = Join-Path $taskRoot '.build\personal-wallpapers'
+if (!$Demo -and (Test-Path -LiteralPath ($taskWallpaperCache + '.lock'))) { throw 'Personal wallpaper cache is being updated; retry after the download finishes.' }
 if (!$Demo -and (Test-Path -LiteralPath (Join-Path $taskWallpaperCache 'sources.json'))) {
-    $taskWallpaperSources = Get-Content -LiteralPath (Join-Path $taskWallpaperCache 'sources.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    foreach ($taskImageName in @('day.png','night.png')) {
-        $taskImageFile = Join-Path $taskWallpaperCache $taskImageName
-        $taskImageRecord = @($taskWallpaperSources.files | Where-Object { $_.name -eq $taskImageName })
-        if ($taskImageRecord.Count -ne 1 -or (Get-FileHash -LiteralPath $taskImageFile -Algorithm SHA256).Hash.ToLowerInvariant() -ne $taskImageRecord[0].sha256) { throw 'Personal wallpaper does not match its reviewed source hash' }
-        Copy-Item -LiteralPath $taskImageFile -Destination (Join-Path $taskBuild ('main\assets\web\wallpapers\'+$taskImageName))
-    }
-    [IO.File]::WriteAllText((Join-Path $taskBuild 'main\assets\web\wallpapers.json'),
-        '{"profile":"personal-tahoe","day":"wallpapers/day.png","night":"wallpapers/night.png"}', (New-Object Text.UTF8Encoding($false)))
+    Invoke-BuildTool $taskPythonCommand.Source @((Join-Path $taskRoot 'tools\fetch-personal-wallpapers.py'), '--stage-web', (Join-Path $taskBuild 'main\assets\web'))
 }
 # The portable build compiles against the newest installed Android stubs. The code
 # gates modern APIs at runtime; target SDK stays 37. Android Studio compiles at 37.

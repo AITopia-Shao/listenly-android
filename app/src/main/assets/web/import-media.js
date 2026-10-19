@@ -1,3 +1,4 @@
+import {paperAudio,validatePaperTimeline} from './paper-timeline.js';
 import { validateIntensiveTranscript } from './importer.js';
 
 const METADATA_TIMEOUT_MS = 8000;
@@ -43,12 +44,12 @@ function readDuration(url) {
 }
 
 /** Validate a new intensive import against decoded audio before saving any files. */
-export async function validateImportedIntensiveMedia(papers) {
+export async function validateImportedIntensiveMedia(papers,{requireTranscript=true}={}) {
   const articles = (papers || []).flatMap(paper => paper.articles || []);
   const groups = new Map();
   const warnings = [];
   for (const article of articles) {
-    const url = article.audio?.intensive;
+    const url = article.audio?.intensive||article.audio?.exam;
     if (typeof url !== 'string' || !url) {
       warnings.push({ code: 'INTENSIVE_AUDIO_REQUIRED', message: `「${short(article.title || article.id)}」缺少精听音频。` });
       continue;
@@ -69,7 +70,8 @@ export async function validateImportedIntensiveMedia(papers) {
         continue;
       }
       for (const article of linked) {
-        warnings.push(...validateIntensiveTranscript(article, result.duration));
+        if(requireTranscript)warnings.push(...validateIntensiveTranscript(article,Number.isFinite(article.end)?article.end-article.start:result.duration));
+        if(Number.isFinite(article.end)&&article.end>result.duration+.05)warnings.push({code:'INVALID_PAPER_TIMELINE',message:'篇章标记超出实际整套音频，本次未导入。'});
       }
       verified.set(url, result.duration);
     }
@@ -77,6 +79,12 @@ export async function validateImportedIntensiveMedia(papers) {
   await Promise.all(Array.from({ length: Math.min(2, queue.length) }, () => worker()));
   if (warnings.length) return { rejected: true, warnings };
   // The caller's parsed library is updated only after the entire selection passes.
-  for (const article of articles) article.duration = verified.get(article.audio.intensive);
+  for(const paper of papers){
+    const decoded=verified.get(paperAudio(paper));if(decoded)paper.duration=decoded;
+    for(const article of paper.articles||[]){
+      if(paper.articles.length===1&&article.start===0&&!Number.isFinite(article.end))article.end=decoded;
+      article.duration=Number.isFinite(article.end)?article.end-article.start:verified.get(article.audio.intensive||article.audio.exam);
+    }
+  }
   return { rejected: false, warnings: [] };
 }

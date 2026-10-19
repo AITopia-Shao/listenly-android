@@ -11,7 +11,7 @@ const args = process.argv.slice(2), option = name => { const i = args.indexOf(na
 const output = path.resolve(option('--output') || '.build/import-media-browser');
 const web = path.join(output, 'web');
 await mkdir(web, { recursive: true });
-for (const name of ['import-media.js', 'importer.js']) await copyFile(path.join('app/src/main/assets/web', name), path.join(web, name));
+for (const name of ['import-media.js', 'importer.js', 'paper-timeline.js']) await copyFile(path.join('app/src/main/assets/web', name), path.join(web, name));
 // Locally generated original PCM tones test media decoding without private material.
 function pcm(seconds) {
   const rate = 8000, length = Math.round(rate * seconds), result = Buffer.alloc(44 + length * 2);
