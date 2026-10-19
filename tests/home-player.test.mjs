@@ -60,8 +60,24 @@ async function makePaperFixture(){
 }
 async function layout(theme,viewport){
  await click('[data-action="nav"][data-route="profile"]');await click(`[data-action="theme"][data-theme="${theme}"]`);await click('[data-action="nav"][data-route="home"]');await page.setViewportSize(viewport);
+ // Resize callbacks and lens springs run after setViewportSize resolves. Read
+ // the final layout only after their actual geometry settles, including lenses
+ // outside the viewport; the overflow assertion below remains unchanged.
+ const resizeSettled=await page.evaluate(async expected=>{
+  const frame=()=>new Promise(resolve=>requestAnimationFrame(resolve));await frame();await frame();
+  const started=performance.now();let previous=null,stable=0,frames=0;
+  while(performance.now()-started<3500){
+   await frame();frames++;
+   const boxes=[...document.querySelectorAll('.home-playback,.bottom-nav,.flow-lens,.nav-lens')].flatMap(element=>{const r=element.getBoundingClientRect();return [r.left,r.top,r.width,r.height]});
+   const sample=[innerWidth,innerHeight,document.documentElement.scrollWidth,...boxes];
+   const atViewport=innerWidth===expected.width&&innerHeight===expected.height;
+   stable=atViewport&&!document.documentElement.dataset.themeTransition&&previous?.length===sample.length&&sample.every((value,index)=>Math.abs(value-previous[index])<.1)?stable+1:0;
+   if(stable>=3)return {frames,stableFrames:stable,elapsed:performance.now()-started};previous=sample;
+  }
+  throw new Error(`Home layout did not settle at ${expected.width}×${expected.height}: ${JSON.stringify(previous)}`);
+ },viewport);
  const geometry=await page.evaluate(()=>{const rect=e=>{const r=e.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}};return {width:innerWidth,height:innerHeight,contentWidth:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(e=>{const r=e.getBoundingClientRect();return r.width&&r.right>innerWidth+1}).slice(0,12).map(e=>({tag:e.tagName,class:e.className,text:e.innerText?.slice(0,40),right:e.getBoundingClientRect().right})),player:rect(document.querySelector('.home-playback')),nav:rect(document.querySelector('.bottom-nav')),buttons:[...document.querySelectorAll('.home-playback .player-buttons button')].map(b=>({...rect(b),action:b.dataset.action})),seekCount:document.querySelectorAll('#seek').length,loopCount:document.querySelectorAll('.home-playback [data-action="loop"]').length}});
- result.lastLayout=geometry;assert.ok(geometry.contentWidth<=geometry.width+1,JSON.stringify(geometry.overflow));assert.equal(geometry.seekCount,1);assert.equal(geometry.loopCount,0);assert.equal(geometry.buttons.length,5,'home has speed, two skips, play and playback mode');assert.equal(await page.locator('.home-playback [data-action="playback-mode"]').count(),1);assert.ok(geometry.buttons.every(b=>b.width>=44&&b.height>=44&&b.left>=0&&b.right<=geometry.width+.5),'home controls retain 44px touch targets');assert.ok(geometry.player.bottom<geometry.nav.top,'home card does not overlap floating navigation');return {theme,viewport,...geometry};
+ result.lastLayout=geometry;assert.ok(geometry.contentWidth<=geometry.width+1,JSON.stringify(geometry.overflow));assert.equal(geometry.seekCount,1);assert.equal(geometry.loopCount,0);assert.equal(geometry.buttons.length,5,'home has speed, two skips, play and playback mode');assert.equal(await page.locator('.home-playback [data-action="playback-mode"]').count(),1);assert.ok(geometry.buttons.every(b=>b.width>=44&&b.height>=44&&b.left>=0&&b.right<=geometry.width+.5),'home controls retain 44px touch targets');assert.ok(geometry.player.bottom<geometry.nav.top,'home card does not overlap floating navigation');return {theme,viewport,resizeSettled,...geometry};
 }
 try{
  await page.goto(url);await page.locator('.home-playback').waitFor();
