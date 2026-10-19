@@ -16,6 +16,8 @@
 
 个人包换用 Ten Peaks 日夜壁纸。主题渐变改为合成外观动画，安卓在受支持屏幕上优先请求120Hz；真实GT7的120fps尚未测量，不将刷新率偏好描述为稳定帧率保证。[12轮性能对比](docs/suite-2-performance.md)保留改善和额外布局成本；[格式与材料迁移](docs/paper-timeline.md)说明旧记录保留、完整录音来源及无法定位的旧资料。
 
+Android 8／11／16和浏览器四项[云端验证](https://github.com/AITopia-Shao/listenly-android/actions/runs/39268379302)全部通过，本地最终包另通过真实触控重播、整套定位和数据保留检查。[2.0.0公开安装包](https://github.com/AITopia-Shao/listenly-android/releases/tag/v2.0.0)只含原创示例；[完整验证范围](docs/suite-2-validation.md)保留历史失败、资料边界和真机限制。
+
 ## 1.0.13 的直接倍速与性能调整
 
 倍速按钮直接按 `1 → 1.25 → 1.5 → 1.75 → 2 → 1` 循环，旧 `0.75` 记录迁移为 `1`，保留音频节点、源、进度与暂停／播放状态。主题改用浏览器原生颜色与壁纸透明度渐变；水平标签以固定双字重层交叉强调，配合局部同步和不变 DOM 去重，保留透镜运动。
