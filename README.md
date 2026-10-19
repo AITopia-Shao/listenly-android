@@ -4,11 +4,11 @@
 
 [下载 APK](https://github.com/AITopia-Shao/listenly-android/releases/latest) · [导入材料格式](docs/import-format.md) · [兼容性验证](docs/android-runtime-findings.md) · [MIT 许可证](LICENSE)
 
-| 首页 · 日间 | 精听 · 双语 | 我的 · 夜间 |
+| 整套播放器 | 精听 · 双语 | 整篇答题 |
 | --- | --- | --- |
-| ![日间首页](docs/screenshots/tahoe-home.png) | ![双语精听](docs/screenshots/tahoe-reader.png) | ![夜间个人页](docs/screenshots/tahoe-profile.png) |
+| ![整套播放器](docs/screenshots/suite-2-home.png) | ![双语精听](docs/screenshots/suite-2-reader.png) | ![整篇答题](docs/screenshots/suite-2-quiz.png) |
 
-以上为 1.0.12 公开版本，使用项目原创 SVG 背景与原创英语示例，不包含第三方壁纸或六级真题。
+以上为 2.0.0 公开版本，使用项目原创 SVG 背景与原创英语示例，不包含第三方壁纸或六级真题。
 
 ## 2.0 的整套播放与考试合集
 
