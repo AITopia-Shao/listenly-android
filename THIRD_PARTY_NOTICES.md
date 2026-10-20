@@ -1,6 +1,6 @@
 # 第三方声明 / Third-party notices
 
-可选个人版 Tahoe 壁纸来源于 Basic Apple Guy，原图不进入公共仓库、云端测试或公开演示包，也不受本项目 MIT 许可证授权。提交的 `wallpapers/day.svg`、`wallpapers/night.svg` 和播放蒙版为项目原创矢量资源。[来源与构建说明](docs/wallpapers-and-flow.md)。
+可选个人版 Ten Peaks 壁纸来源于 Basic Apple Guy，原图不进入公共仓库、云端测试或公开演示包，也不受本项目 MIT 许可证授权。提交的 `wallpapers/day.svg`、`wallpapers/night.svg` 和播放蒙版为项目原创矢量资源。[来源与构建说明](docs/wallpapers-and-flow.md)。
 
 本项目原创代码、文档按根目录 `LICENSE` 的 MIT 许可证发布；`examples/demo/` 英语示例按其材料声明使用 CC0-1.0。第三方组件保留下列许可证；历史试题、译文、录音及用户导入材料不因本项目开源而获得再发布许可。
 
@@ -12,8 +12,19 @@
 | Playwright / playwright-core | 1.57.0 | 浏览器与模拟器检查工具 | Apache-2.0 |
 | Inter | 4.1 | APK 离线英文字体与数字字体；中文使用系统回退 | SIL OFL-1.1 |
 | Gradle wrapper | 9.6.0 | `gradlew`、`gradlew.bat`、wrapper JAR | Apache-2.0 |
+| Miuix UI / preference / icons / blur | 0.9.4 | Android 原生 Compose 组件、图标、交互与玻璃材质 | Apache-2.0 |
+| Kotlin / Compose compiler plugin | 2.4.20 | 原生 UI 编译和运行时 | Apache-2.0 |
+| AndroidX Compose / Activity / ProfileInstaller | 由 Gradle 固定的依赖版本 | 原生 UI、生命周期、返回导航及运行时配置 | Apache-2.0 |
 
 `package-lock.json` 固定开发依赖和传递依赖版本。它们由 `npm ci` 下载，不作为整套 `node_modules` 再发布；安装目录各包的 `LICENSE` / `package.json` 是对应许可证来源。构建器将本声明和项目许可证复制进公开 APK 的 `assets/web/THIRD_PARTY_NOTICES.txt` 与 `assets/web/LICENSE.txt`，使随 APK 发布的运行时代码保留完整归属声明。
+
+## Native Compose UI / Miuix
+
+来源：[Miuix 0.9.4](https://github.com/compose-miuix-ui/miuix/releases/tag/v0.9.4)，参考版本提交 `39c40f99844227b853f0049a0933b1f3ae6c00ba`。Copyright © 2026 compose-miuix-ui contributors。应用直接依赖原生 Miuix 组件；本项目的适配代码用于离线听力界面及旧版音频引擎桥接。组件库使用 Apache-2.0；完整许可证也随 APK 保留在 `assets/web/licenses/Apache-2.0.txt`。
+
+Miuix 的液态玻璃示例注明参考 [Kyant0 / AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass)，同为 Apache-2.0。若适配其示例，相关源文件保留原版权及 SPDX 头部；本项目的 MIT 许可不覆盖第三方原始部分。
+
+Kotlin 来源：[JetBrains Kotlin](https://github.com/JetBrains/kotlin)；AndroidX / Compose 来源：[Android Open Source Project](https://android.googlesource.com/platform/frameworks/support/)。这些运行时和生成代码所需的 Apache-2.0 条款见下文及随包许可证。Gradle 配置固定直接依赖版本，APK 打包保留依赖自身的非冲突许可证元数据。
 
 ## core-js
 

@@ -71,6 +71,9 @@ class PublicDemoAssetTests(unittest.TestCase):
                 expected.add("THIRD_PARTY_NOTICES.txt")
             if (ROOT / "LICENSE").is_file():
                 expected.add("LICENSE.txt")
+            for license_file in (ROOT / "LICENSES").glob("*.txt"):
+                expected.add(f"licenses/{license_file.name}")
+                self.assertEqual((web / 'licenses' / license_file.name).read_bytes(), license_file.read_bytes())
             self.assertEqual(actual, expected)
             self.assertEqual(json.loads((web / "bundled-library.json").read_text(encoding="utf-8"))["papers"], [])
             self.assertEqual(json.loads((web / "demo.json").read_text(encoding="utf-8")), json.loads((ROOT / "examples" / "demo" / "demo.json").read_text(encoding="utf-8-sig")))

@@ -1,6 +1,6 @@
 {
   "name": "listenly-android",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,7 +13,8 @@
     "prepare:demo": "npm run build:web && python tools/prepare-demo-assets.py",
     "start": "node tools/preview.mjs",
     "start:demo": "node tools/preview.mjs --demo",
-    "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs tests/activity.test.mjs tests/playback-modes.test.mjs tests/glass-motion.test.mjs tests/paper-timeline.test.mjs",
+    "test": "node --test tests/alignment.test.mjs tests/importer.test.mjs tests/activity.test.mjs tests/playback-modes.test.mjs tests/glass-motion.test.mjs tests/paper-timeline.test.mjs tests/native-engine.test.mjs",
+    "test:native-engine": "node tests/native-engine-browser.test.mjs",
     "test:demo": "python -m unittest discover -s tests -p test_demo_assets.py",
     "test:ui": "node tests/ui.test.mjs --demo",
     "test:replay": "node tests/audio-replay.test.mjs --demo",

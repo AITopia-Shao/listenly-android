@@ -24,7 +24,9 @@ def normalized_name(name: str) -> str:
 
 
 def must_store(name: str) -> bool:
-    return name == "resources.arsc" or PurePosixPath(name).suffix.lower() in AUDIO_SUFFIXES
+    # Native libraries must stay uncompressed for extractNativeLibs=false.
+    # zipalign -P 16, called after normalization, aligns these mmap entries.
+    return name == "resources.arsc" or PurePosixPath(name).suffix.lower() in AUDIO_SUFFIXES or name.startswith("lib/") and name.endswith(".so")
 
 
 def verify(apk: Path) -> dict[str, int]:
@@ -42,7 +44,7 @@ def verify(apk: Path) -> dict[str, int]:
             if must_store(name):
                 if entry.compress_type != zipfile.ZIP_STORED:
                     raise ValueError(f"APK entry must use ZIP_STORED (method 0): {name}; got method {entry.compress_type}")
-                if name != "resources.arsc":
+                if PurePosixPath(name).suffix.lower() in AUDIO_SUFFIXES:
                     audio_count += 1
         if "resources.arsc" not in names:
             raise ValueError("APK is missing resources.arsc")

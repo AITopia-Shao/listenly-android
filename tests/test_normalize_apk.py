@@ -26,6 +26,7 @@ class NormalizeApkTests(unittest.TestCase):
             contents = {"resources.arsc": b"resource-table" * 128,
                         "assets\\web\\media\\spoken.wav": b"RIFF" + b"wav" * 256,
                         "assets/web/media/passage.m4a": b"aac" * 256,
+                        "lib/arm64-v8a/libsample.so": b"\x7fELF" + b"native" * 128,
                         "assets/web/index.html": b"<html>offline</html>" * 128}
             with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 for name, data in contents.items():
@@ -41,7 +42,7 @@ class NormalizeApkTests(unittest.TestCase):
                 for name, data in contents.items():
                     normalized = name.replace("\\", "/")
                     self.assertEqual(archive.read(normalized), data)
-                    expected = zipfile.ZIP_STORED if normalized == "resources.arsc" or normalized.endswith((".wav", ".m4a")) else zipfile.ZIP_DEFLATED
+                    expected = zipfile.ZIP_STORED if normalized == "resources.arsc" or normalized.endswith((".wav", ".m4a", ".so")) else zipfile.ZIP_DEFLATED
                     self.assertEqual(archive.getinfo(normalized).compress_type, expected)
                 self.assertEqual(archive.read("classes.dex"), b"dex\n035\x00")
 

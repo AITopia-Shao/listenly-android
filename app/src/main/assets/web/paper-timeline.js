@@ -8,8 +8,13 @@ export function migrateLegacyPosition(article,time){
   return Number.isFinite(article?.start)&&article.start>=0&&Number.isFinite(time)&&time>=0?article.start+time:undefined;
 }
 export function articleAtTime(paper,time){
+  if(!Number.isFinite(time)||time<0)return null;
   const rows=(paper?.articles||[]).filter(article=>Number.isFinite(article.start));
-  return rows.find(article=>time>=articleStart(article)&&time<articleEnd(article))||null;
+  // HTMLMediaElement may quantize an authored fractional seek to microseconds.
+  // Treat both sides of an adjacent boundary consistently, so the first
+  // timeupdate cannot switch back to the chapter we have just left.
+  const clockTolerance=.000001;
+  return rows.find(article=>time>=articleStart(article)-clockTolerance&&time<articleEnd(article)-clockTolerance)||null;
 }
 export function paperCollection(paper){
   const value=paper?.collection;

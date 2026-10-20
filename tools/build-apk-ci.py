@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct SDK build of the CI fixture or --demo original examples, using a temporary test key."""
+"""Build the native Compose UI with approved public assets and a temporary CI key."""
 from __future__ import annotations
 
 import argparse
@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
@@ -36,7 +37,10 @@ def build(args: argparse.Namespace) -> None:
     sdk = args.sdk.resolve()
     java_home = args.java_home.resolve()
     tools = sdk / "build-tools" / args.build_tools
-    android_jar = sdk / "platforms" / f"android-{args.compile_api}" / "android.jar"
+    platform_dir = sdk / "platforms" / f"android-{args.compile_api}"
+    if not platform_dir.is_dir():
+        platform_dir = sdk / "platforms" / f"android-{args.compile_api}.0"
+    android_jar = platform_dir / "android.jar"
     staging_type = "demo" if args.demo else "ci"
     staged = (args.staged_main or ROOT / ".build" / staging_type / "main").resolve()
     staging_root = (ROOT / ".build" / staging_type).resolve()
@@ -52,7 +56,7 @@ def build(args: argparse.Namespace) -> None:
         # Only the explicitly labelled second original suite may be bundled in
         # compatibility builds. Public release examples retain an empty library.
         validate_ci_suites(fixture, library)
-    allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "paper-timeline.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg", "demo.json", "bundled-library.json")}
+    allowed = {f"assets/web/{name}" for name in ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "paper-timeline.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "native-engine.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg", "demo.json", "bundled-library.json")}
     for filename in ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md"):
         packaged = staged / 'assets' / 'web' / 'fonts' / filename
         source_font = ROOT / 'app' / 'src' / 'main' / 'assets' / 'web' / 'fonts' / filename
@@ -84,6 +88,11 @@ def build(args: argparse.Namespace) -> None:
             allowed.add(f"assets/web/{filename}")
     if (staged / "assets" / "web" / "THIRD_PARTY_NOTICES.txt").is_file():
         allowed.add("assets/web/THIRD_PARTY_NOTICES.txt")
+    for license_file in (ROOT / "LICENSES").glob("*.txt"):
+        packaged = staged / "assets" / "web" / "licenses" / license_file.name
+        if not packaged.is_file() or hashlib.sha256(packaged.read_bytes()).digest() != hashlib.sha256(license_file.read_bytes()).digest():
+            raise ValueError(f"Packaged upstream license differs: {license_file.name}")
+        allowed.add(f"assets/web/licenses/{license_file.name}")
     actual = {item.relative_to(staged).as_posix() for item in (staged / "assets").rglob("*") if item.is_file()}
     if actual != allowed:
         raise ValueError(f"Unexpected or missing CI assets: {sorted(actual.symmetric_difference(allowed))}")
@@ -134,18 +143,32 @@ def build(args: argparse.Namespace) -> None:
             min_sdk = uses_sdk.attrib[f"{{{ANDROID}}}minSdkVersion"]
             target_sdk = uses_sdk.attrib[f"{{{ANDROID}}}targetSdkVersion"]
             manifest.write(work / "AndroidManifest.xml", encoding="utf-8", xml_declaration=True)
-            run([tools / f"aapt2{suffix}", "compile", "--dir", main / "res", "-o", work / "compiled.zip"])
-            run([tools / f"aapt2{suffix}", "link", "-I", android_jar, "--manifest", work / "AndroidManifest.xml", "--java", work / "gen", "--auto-add-overlay", "-A", main / "assets", "-o", work / "base.apk", work / "compiled.zip"])
-            sources = sorted((main / "java").rglob("*.java")) + sorted((work / "gen").rglob("*.java"))
-            run([javac, "--release", "8", "-encoding", "UTF-8", "-classpath", android_jar, "-d", work / "classes", *sources])
-            run([java, "-cp", tools / "lib" / "d8.jar", "com.android.tools.r8.D8", "--min-api", min_sdk, "--lib", android_jar, "--output", work / "dex", *sorted((work / "classes").rglob("*.class"))])
-            with zipfile.ZipFile(work / "base.apk") as source, zipfile.ZipFile(work / "normalized.apk", "w") as destination:
-                for entry in source.infolist():
-                    name = entry.filename.replace("\\", "/")
-                    compression = zipfile.ZIP_STORED if name == "resources.arsc" or name.endswith(".wav") else zipfile.ZIP_DEFLATED
-                    destination.writestr(name, source.read(entry), compress_type=compression)
-                for dex in sorted((work / "dex").glob("*.dex")):
-                    destination.write(dex, dex.name, compress_type=zipfile.ZIP_DEFLATED)
+            # Gradle compiles the genuine Kotlin/Compose/Miuix UI. The public
+            # edition's already validated assets are the only selected asset root.
+            gradle = ROOT / ("gradlew.bat" if os.name == "nt" else "gradlew")
+            build_env = os.environ.copy()
+            build_env.update({"JAVA_HOME": str(java_home), "ANDROID_HOME": str(sdk), "ANDROID_SDK_ROOT": str(sdk)})
+            if os.name == "nt" and build_env.get("CODEX_WINDOWS_SANDBOX_PACKAGE_FAMILY"):
+                fallback = ROOT / ".build" / "gradle-no-unix-sockets"
+                if fallback.exists():
+                    raise ValueError("The Gradle socket fallback path must remain absent")
+                build_env["JAVA_TOOL_OPTIONS"] = (build_env.get("JAVA_TOOL_OPTIONS", "") + f' "-Djdk.net.unixdomain.tmpdir={fallback}"').strip()
+            command = [str(gradle), ":app:assembleDebug", "--no-daemon", f"-PlistenlyAssetsDir={main / 'assets'}", "-PlistenlySkipAssetPreparation=true"]
+            if os.name == "nt" and not str(ROOT).isascii():
+                command.append("-Pandroid.overridePathCheck=true")
+            rendered = subprocess.list2cmdline(command)
+            print(rendered, flush=True)
+            log.write(rendered + "\n")
+            result = subprocess.run(command, cwd=ROOT, env=build_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+            print(result.stdout, end="", flush=True)
+            log.write(result.stdout)
+            log.flush()
+            if result.returncode:
+                raise subprocess.CalledProcessError(result.returncode, command, result.stdout)
+            gradle_apk = ROOT / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
+            if not gradle_apk.is_file():
+                raise FileNotFoundError("Gradle did not produce the native Compose APK")
+            run([sys.executable, ROOT / "tools" / "normalize-apk.py", gradle_apk, work / "normalized.apk"])
             run([tools / f"zipalign{suffix}", "-P", "16", "-f", "4", work / "normalized.apk", work / "aligned.apk"])
             # Temporary disposable key. Never reads or uploads the local user's installation key.
             keystore = work / "ci-only.keystore"
@@ -173,7 +196,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", type=Path, default=Path(os.environ.get("ANDROID_HOME", os.environ.get("ANDROID_SDK_ROOT", "."))))
     parser.add_argument("--java-home", type=Path, default=Path(os.environ.get("JAVA_HOME", ".")))
-    parser.add_argument("--compile-api", type=int, default=36)
+    parser.add_argument("--compile-api", type=int, default=37)
     parser.add_argument("--build-tools", default="36.0.0")
     parser.add_argument("--work-dir", type=Path, help="Temporary build parent; an ASCII-only path is recommended on Windows")
     parser.add_argument("--demo", action="store_true", help="Build the CC0 original examples staged by tools/prepare-demo-assets.py; still uses a temporary test signing key")

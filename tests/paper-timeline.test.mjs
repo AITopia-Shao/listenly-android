@@ -55,6 +55,18 @@ test('one full recording owns chapter boundaries and sentence coordinates', () =
   assert.equal(articleAtTime(suite, 70), null);
 });
 
+test('a fractional seek rounded by the audio decoder stays in the requested chapter', () => {
+  const boundary = 34.41215419501134;
+  const suite = paper({ articles: [article('a', 0, boundary), article('b', boundary, 70)] });
+  assert.equal(articleAtTime(suite, 34.412154)?.id, 'b');
+  assert.equal(articleAtTime(suite, boundary)?.id, 'b');
+  assert.equal(articleAtTime(suite, boundary - .001)?.id, 'a');
+  const gap = paper({ articles: [article('a', 0, 30), article('b', boundary, 70)] });
+  assert.equal(articleAtTime(gap, 30), null);
+  assert.equal(articleAtTime(gap, boundary - .001), null);
+  for (const time of [NaN, Infinity, -Infinity, -1]) assert.equal(articleAtTime(suite, time), null);
+});
+
 test('unlocated historical chapters do not gain seekable boundaries', () => {
   const legacy = { id: 'cet6-legacy', articles: [
     { id: 'a', duration: 20, audio: { intensive: 'a.mp3' }, questions: [question()] },

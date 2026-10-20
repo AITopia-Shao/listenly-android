@@ -1,26 +1,56 @@
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+def stagedAssets = providers.gradleProperty('listenlyAssetsDir')
+def externalAssets = stagedAssets.isPresent()
 
 android {
     namespace 'cn.listenly.app'
-    compileSdk 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 0 }
+    }
     defaultConfig {
         applicationId 'cn.listenly.app'
         minSdk 26
         targetSdk 37
-        versionCode 16
-        versionName '2.0.1'
+        versionCode 17
+        versionName '3.0.0'
     }
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
+    buildFeatures { compose true }
     // Public builds use original examples rather than a developer's local corpus.
     sourceSets {
-        main { assets.srcDirs = [rootProject.file('.build/demo/main/assets')] }
+        main {
+            assets.srcDirs = [externalAssets ? file(stagedAssets.get()) : rootProject.file('.build/demo/main/assets')]
+        }
     }
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            debuggable false
+        }
     }
+    androidResources {
+        // Whole-paper audio must remain seekable through AssetFileDescriptor.
+        noCompress += ['m4a', 'mp3', 'aac', 'wav', 'ogg', 'opus', 'flac', 'mp4']
+    }
+    packaging {
+        resources.excludes += ['META-INF/AL2.0', 'META-INF/LGPL2.1', 'META-INF/LICENSE.md', 'META-INF/LICENSE-notice.md']
+    }
+}
+
+dependencies {
+    implementation 'androidx.activity:activity-compose:1.13.0'
+    implementation 'androidx.profileinstaller:profileinstaller:1.4.1'
+    implementation 'top.yukonga.miuix.kmp:miuix-ui:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-preference:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-icons:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-blur:0.9.4'
 }
 
 def taskWindows = System.getProperty('os.name').toLowerCase().contains('windows')
@@ -33,4 +63,6 @@ def prepareDemoAssets = tasks.register('prepareDemoAssets', Exec) {
     workingDir rootProject.projectDir
     commandLine(taskWindows ? 'python' : 'python3', 'tools/prepare-demo-assets.py')
 }
-tasks.named('preBuild').configure { dependsOn prepareDemoAssets }
+if (!externalAssets && !providers.gradleProperty('listenlySkipAssetPreparation').isPresent()) {
+    tasks.named('preBuild').configure { dependsOn prepareDemoAssets }
+}

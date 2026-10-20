@@ -1,6 +1,8 @@
 package cn.listenly.app;
 
-import android.app.Activity;
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
+import cn.listenly.app.ui.NativeUiController;
 import android.content.Intent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -59,7 +61,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /** Offline, single-origin Android host. User-selected folders are copied into app-private storage. */
-public final class MainActivity extends Activity {
+public final class MainActivity extends ComponentActivity {
+    private static final boolean USE_NATIVE_UI = true;
     private static final String HOST = "listenly.local";
     private static final String START = "https://" + HOST + "/assets/index.html";
     private static final int IMPORT_REQUEST = 401;
@@ -70,20 +73,22 @@ public final class MainActivity extends Activity {
     private static final int MAX_INLINE_BYTES = 16 * 1024 * 1024;
     private static final int MAX_FILES = 25000;
     private WebView webView;
+    private volatile NativeUiController nativeUi;
+    private volatile int engineGeneration;
     private volatile ThemeTransitionOverlay themeTransition;
     private File importsRoot;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private volatile boolean importing;
     private String pendingMode;
     private String pendingExport;
-    private Object backCallback;
     private final StringBuilder startupWarnings = new StringBuilder();
     private float insetTop, insetBottom, insetLeft, insetRight;
     private float sentInsetTop, sentInsetBottom, sentInsetLeft, sentInsetRight;
     private boolean insetsSent;
     private boolean darkTheme;
     private boolean windowThemeApplied, appliedDarkTheme;
-    private WebView themedWebView, frameRateView;
+    private WebView themedWebView;
+    private View frameRateView;
     private boolean webViewDarkTheme;
     private float requestedViewFrameRate, requestedWindowFrameRate;
 
@@ -94,10 +99,9 @@ public final class MainActivity extends Activity {
         importsRoot = new File(getFilesDir(), "imports");
         if (!importsRoot.exists()) importsRoot.mkdirs();
         configureWindowSafely();
-        if (Build.VERSION.SDK_INT >= 33) {
-            try { backCallback = ModernBack.register(this); }
-            catch (RuntimeException | LinkageError failure) { noteCompatibilityFailure("预测返回初始化", failure); }
-        }
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() { handleBack(); }
+        });
         initializeWebView();
     }
 
@@ -118,11 +122,14 @@ public final class MainActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        settings.setMediaPlaybackRequiresUserGesture(true);
+        // A native Compose tap reaches the audio engine through the trusted
+        // bridge, rather than a browser DOM gesture. Keep the engine attached.
+        settings.setMediaPlaybackRequiresUserGesture(!USE_NATIVE_UI);
         settings.setSupportMultipleWindows(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setTextZoom(100);
-        webView.addJavascriptInterface(new AndroidBridge(), "Android");
+        final int generation = ++engineGeneration;
+        webView.addJavascriptInterface(new AndroidBridge(generation), "Android");
         WebView.setWebContentsDebuggingEnabled(
                 (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         webView.setWebViewClient(new WebViewClient() {
@@ -182,15 +189,28 @@ public final class MainActivity extends Activity {
             return insets;
         });
         FrameLayout webHost = new FrameLayout(this);
-        webHost.addView(webView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        themeTransition = new ThemeTransitionOverlay(this, webHost, webView);
+        if (USE_NATIVE_UI) {
+            // This WebView owns only the existing offline engine and audio.
+            // Visibility, gestures, layout and animation are native Compose.
+            webView.setAlpha(0f);
+            webView.setClickable(false);
+            webView.setFocusable(false);
+            webView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+            webHost.addView(webView, new FrameLayout.LayoutParams(1, 1));
+            nativeUi = new NativeUiController(this, this::dispatchNativeAction, darkTheme);
+            webHost.addView(nativeUi.getView(), new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } else {
+            webHost.addView(webView, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            themeTransition = new ThemeTransitionOverlay(this, webHost, webView);
+        }
         setContentView(webHost);
         webView.requestApplyInsets();
         requestHighRefreshRateSafely();
         webView.loadUrl(START);
         } catch (RuntimeException | LinkageError failure) {
-            showNativeFailure("系统网页组件未能启动", failure);
+            showNativeFailure("应用界面未能启动", failure);
         }
     }
 
@@ -220,6 +240,13 @@ public final class MainActivity extends Activity {
     }
 
     private void disposeWebView(WebView view) {
+        if (view == webView || webView == null) {
+            NativeUiController controller = nativeUi;
+            nativeUi = null;
+            if (controller != null) controller.destroy();
+            frameRateView = null;
+            requestedViewFrameRate = 0;
+        }
         if (view == null) return;
         if (themeTransition != null) { themeTransition.cancel(); themeTransition = null; }
         if (themedWebView == view) themedWebView = null;
@@ -362,7 +389,8 @@ public final class MainActivity extends Activity {
     /** Supported, same-resolution hints only; the OS still owns presentation. */
     @SuppressWarnings("deprecation") private void requestHighRefreshRateSafely() {
         try {
-            Display display = webView == null ? null : webView.getDisplay();
+            View content = nativeUi == null ? webView : nativeUi.getView();
+            Display display = content == null ? null : content.getDisplay();
             if (display == null) display = getWindowManager().getDefaultDisplay();
             if (display == null) return;
             Display.Mode current = display.getMode();
@@ -387,8 +415,8 @@ public final class MainActivity extends Activity {
                     }
                     requestedWindowFrameRate = 0;
                 }
-                if (Build.VERSION.SDK_INT >= 35 && frameRateView == webView && requestedViewFrameRate > 0) {
-                    ModernFrameRate.clear(webView);
+                if (Build.VERSION.SDK_INT >= 35 && frameRateView != null && requestedViewFrameRate > 0) {
+                    ModernFrameRate.clear(frameRateView);
                     frameRateView = null;
                     requestedViewFrameRate = 0;
                 }
@@ -401,10 +429,10 @@ public final class MainActivity extends Activity {
                 getWindow().setAttributes(attributes);
                 requestedWindowFrameRate = rate;
             }
-            if (Build.VERSION.SDK_INT >= 35 && webView != null &&
-                    (frameRateView != webView || Math.abs(requestedViewFrameRate - rate) > .01f)) {
-                ModernFrameRate.request(webView, rate);
-                frameRateView = webView;
+            if (Build.VERSION.SDK_INT >= 35 && content != null &&
+                    (frameRateView != content || Math.abs(requestedViewFrameRate - rate) > .01f)) {
+                ModernFrameRate.request(content, rate);
+                frameRateView = content;
                 requestedViewFrameRate = rate;
             }
         } catch (RuntimeException | LinkageError failure) {
@@ -488,7 +516,51 @@ public final class MainActivity extends Activity {
         return trusted(uri) && "/assets/index.html".equals(uri.getPath());
     }
 
+    private void dispatchNativeAction(String action, String payload) {
+        if (action == null || action.length() > 80 || payload == null || payload.length() > 4 * 1024 * 1024) return;
+        final String data;
+        try { data = new JSONObject(payload).toString(); }
+        catch (JSONException invalid) { return; }
+        runOnUiThread(() -> {
+            if (webView == null || nativeUi == null) return;
+            webView.evaluateJavascript("window.listenlyNativeCommand&&window.listenlyNativeCommand(" +
+                    JSONObject.quote(action) + "," + data + ");", null);
+        });
+    }
+
     private final class AndroidBridge {
+        private final int generation;
+        AndroidBridge(int generation) { this.generation = generation; }
+        private boolean isCurrent() { return generation == engineGeneration && nativeUi != null; }
+
+        @JavascriptInterface public boolean isNativeUiEnabled() { return USE_NATIVE_UI; }
+
+        @JavascriptInterface public String getNativeUiDiagnostics() {
+            if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0 || !isCurrent()) return "{}";
+            NativeUiController controller = nativeUi;
+            return controller == null ? "{}" : controller.getMotionDiagnostics();
+        }
+
+        @JavascriptInterface public void onNativeCatalog(String json) {
+            if (json == null || json.length() > 32 * 1024 * 1024 || !isCurrent()) return;
+            runOnUiThread(() -> { if (isCurrent()) nativeUi.onCatalog(json); });
+        }
+
+        @JavascriptInterface public void onNativeState(String json) {
+            if (json == null || json.length() > 4 * 1024 * 1024 || !isCurrent()) return;
+            runOnUiThread(() -> { if (isCurrent()) nativeUi.onState(json); });
+        }
+
+        @JavascriptInterface public void onNativeProgress(String json) {
+            if (json == null || json.length() > 16 * 1024 || !isCurrent()) return;
+            runOnUiThread(() -> { if (isCurrent()) nativeUi.onProgress(json); });
+        }
+
+        @JavascriptInterface public void onNativeToast(String message) {
+            if (message == null || !isCurrent()) return;
+            final String text = message.substring(0, Math.min(message.length(), 1000));
+            runOnUiThread(() -> { if (isCurrent()) nativeUi.showToast(text); });
+        }
         @JavascriptInterface public boolean beginThemeTransition(long id) {
             if (id <= 0 || id > Integer.MAX_VALUE || themeTransition == null) return false;
             runOnUiThread(() -> { if (themeTransition != null) themeTransition.begin(id); });
@@ -876,11 +948,12 @@ public final class MainActivity extends Activity {
                 new ByteArrayInputStream(message.getBytes(StandardCharsets.UTF_8)));
     }
 
-    @Override public void onBackPressed() {
-        handleBack();
-    }
-
     private void handleBack() {
+        if (USE_NATIVE_UI) {
+            NativeUiController controller = nativeUi;
+            if (controller == null || !controller.handleBack()) finish();
+            return;
+        }
         if (webView == null) { finish(); return; }
         webView.evaluateJavascript(
                 "typeof window.listenlyBack === 'function' ? Boolean(window.listenlyBack()) : false",
@@ -890,25 +963,8 @@ public final class MainActivity extends Activity {
                 });
     }
 
-    /** Isolate API 33 classes so the host still loads on Android 8. */
-    private static final class ModernBack {
-        static Object register(MainActivity activity) {
-            android.window.OnBackInvokedCallback callback = activity::handleBack;
-            activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
-                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback);
-            return callback;
-        }
-        static void unregister(MainActivity activity, Object callback) {
-            activity.getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(
-                    (android.window.OnBackInvokedCallback) callback);
-        }
-    }
-
     @Override protected void onDestroy() {
-        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
-            try { ModernBack.unregister(this, backCallback); }
-            catch (RuntimeException | LinkageError failure) { noteCompatibilityFailure("预测返回释放", failure); }
-        }
+        ++engineGeneration;
         worker.shutdownNow();
         disposeWebView(webView);
         webView = null;

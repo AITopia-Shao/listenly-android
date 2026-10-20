@@ -1,4 +1,5 @@
 import {paperAudio,paperDuration,articleStart,articleEnd,sentenceTime,articleAtTime,paperCollection,normalizePaperTimeline,orderedImports,migrateLegacyPosition} from './paper-timeline.js';
+import {isNativeUiEnabled,createNativeEngine,nativeQuestionState} from './native-engine.js';
 import {parseFolder, mergePapers} from './importer.js';
 import {mountGlass,syncGlass,isRangeInteracting,advanceViscousStrain} from './glass.js';
 import {transitionTheme} from './theme.js';
@@ -14,6 +15,8 @@ const icon=(name,extra='')=>name==='play'||name==='pause'?`<span class="glass-sy
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const audio=document.querySelector('#audio');
 const app=document.querySelector('#app');
+const nativeUiEnabled=isNativeUiEnabled(window.Android);
+let nativeEngine=null,nativeNotice='',nativeImportWarnings=[],nativeReady=false,nativeQuizAdvance=null,nativeRangeActive=false;
 const storageKey='listenly.state.v1';
 const playbackSpeeds=[1,1.25,1.5,1.75,2];
 let saved={};try{saved=JSON.parse(localStorage.getItem(storageKey)||'{}')}catch{}
@@ -68,7 +71,7 @@ function recordPaperCoverage(from,to,seconds){
   }
 }
 function persist(){try{localStorage.setItem(storageKey,JSON.stringify(state))}catch{toast('存储空间不足，请导出学习记录。')}}
-function toast(message){const el=document.querySelector('#toast');el.textContent=message;el.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('visible'),3500)}
+function toast(message){if(nativeUiEnabled){nativeNotice=String(message);nativeEngine?.toast(message);return}const el=document.querySelector('#toast');el.textContent=message;el.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('visible'),3500)}
 function nav(route){settleListeningCoverage(true);settleStudyClock();savePosition();if(route!=='practice')audio.pause();state.route=route;if(route==='library'){libraryPaperId=null;libraryCollectionId=null}quizResult=false;render();settleStudyClock();window.scrollTo(0,0)}
 function selectMaterial(p,a){const same=state.active?.paper===p&&state.active?.article===a;settleListeningCoverage(true);settleStudyClock();savePosition();if(state.route!=='practice'){if(state.mode==='exam'&&state.active?.paper===p&&state.active?.article===a)switchMode('intensive');else state.mode='intensive';state.display='hidden'}state.active={paper:p,article:a};state.route='practice';quizResult=false;resetQuestionDisclosure();currentSentence=-1;persist();render();setAudio(same||!Number.isFinite(getArticle()?.start)?undefined:articleStart(getArticle()));settleStudyClock();window.scrollTo(0,0)}
 function prepareHomePlayback(p,a,mark=false){
@@ -89,6 +92,7 @@ function previewPaper(p){toggleLibraryPaper(p)}
 const selectionTimers=new WeakMap();
 function choosePaper(p){
   if(!papers.some(paper=>paper.id===p))return;state.selectedPaper=p;persist();
+  if(nativeUiEnabled){nativeEngine?.publishState();return}
   document.querySelectorAll('.paper-group-row').forEach(row=>{
     const selected=row.dataset.paper===p,wasSelected=row.classList.contains('is-selected'),button=row.querySelector('[data-action="select-paper"]'),paper=papers.find(item=>item.id===row.dataset.paper);
     row.classList.toggle('is-selected',selected);button.setAttribute('aria-pressed',String(selected));button.setAttribute('aria-label',`${selected?'已选择':'选择'}套卷：${paper.title}`);
@@ -99,6 +103,7 @@ function promotePlayingMaterial(){
   const active=getArticle();if(!active||audio.paused||audio.error||audio.readyState<2||audio.getAttribute('src')!==sourceAudio())return;
   const changed=state.selectedPaper!==paperId()||state.homeFocus?.paper!==paperId()||state.homeFocus?.article!==active.id;
   state.selectedPaper=paperId();state.homeFocus={...state.active};if(!changed)return;persist();
+  if(nativeUiEnabled){nativeEngine?.publishState();return}
   if(state.route==='home'){
     const card=document.querySelector('.focus-card');
     if(card?.dataset.paper!==paperId())render();
@@ -133,7 +138,7 @@ function switchMode(mode,updateView=true){
   if(updateView){render();reveal(document.querySelector('.main-panel>div'))}
   if(state.active&&getArticle())setAudio();settleStudyClock();
 }
-function applyTheme(){transitionTheme(state.theme,()=>{document.querySelector('meta[name="theme-color"]').content=state.theme==='dark'?'#000000':'#fafafa';if(window.Android?.setTheme)window.Android.setTheme(state.theme)});document.querySelectorAll('.theme-control').forEach(control=>{control.dataset.current=state.theme;control.querySelectorAll('[data-theme]').forEach(button=>{const active=button.dataset.theme===state.theme;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active))})});syncGlass()}
+function applyTheme(){if(nativeUiEnabled){document.documentElement.dataset.theme=state.theme;window.Android?.setTheme?.(state.theme);nativeEngine?.publishState();return}transitionTheme(state.theme,()=>{document.querySelector('meta[name="theme-color"]').content=state.theme==='dark'?'#000000':'#fafafa';if(window.Android?.setTheme)window.Android.setTheme(state.theme)});document.querySelectorAll('.theme-control').forEach(control=>{control.dataset.current=state.theme;control.querySelectorAll('[data-theme]').forEach(button=>{const active=button.dataset.theme===state.theme;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active))})});syncGlass()}
 function speedControl(){return `<button class="speed-btn transport-pill" data-action="speed" aria-label="播放速度，${state.speed}倍"><span class="speed-value">${state.speed}×</span></button>`}
 function closeSpeedMenu(restoreFocus=true){if(!speedMenu)return;const {shade,trigger}=speedMenu;speedMenu=null;dismissOverlay(shade,shade.querySelector('.speed-popover'));trigger.setAttribute('aria-expanded','false');trigger.removeAttribute('aria-controls');if(restoreFocus&&trigger.isConnected){try{trigger.focus({preventScroll:true})}catch{trigger.focus()}}}
 function setPlaybackSpeed(value){const speed=Number(value);if(!playbackSpeeds.includes(speed))return;settleListeningCoverage();state.speed=speed;audio.playbackRate=speed;persist();document.querySelectorAll('[data-action="speed"]').forEach(button=>{button.querySelector('.speed-value').textContent=`${speed}×`;button.setAttribute('aria-label',`播放速度，${speed}倍`)})}
@@ -260,6 +265,7 @@ function quiz(){
 }
 // Keep accordion nodes in place so expansion follows the tap and playback is uninterrupted.
 function refreshQuiz(focusIndex){
+  if(nativeUiEnabled){nativeEngine?.publishState();return}
   const current=document.querySelector('.quiz-card');if(!current)return;
   const holder=document.createElement('div');holder.innerHTML=quiz();const next=holder.firstElementChild;
   current.querySelector('.quiz-summary').innerHTML=next.querySelector('.quiz-summary').innerHTML;
@@ -358,9 +364,10 @@ function profile(){
 let studyTickAt=performance.now(),questionStudyActive=false,profileDay=today();
 function settleStudyClock(){const now=performance.now();if(questionStudyActive)recordStudySeconds(state,Math.max(0,Math.min(2,(now-studyTickAt)/1000)));studyTickAt=now;questionStudyActive=!document.hidden&&state.route==='practice'&&state.mode==='exam'&&!quizResult&&audio.paused}
 function updateText(element,value){if(element&&element.textContent!==String(value))element.textContent=value}
-function refreshProfileStats(){const stats=activitySummary(state);for(const [key,value] of [['today-listening-minutes',stats.listeningMinutes],['today-articles',stats.completedArticles],['total-study-hours',stats.studyHours.toFixed(1)]])updateText(document.querySelector(`[data-stat="${key}"]`),value)}
+function refreshProfileStats(){if(nativeUiEnabled){nativeEngine?.publishState();return}const stats=activitySummary(state);for(const [key,value] of [['today-listening-minutes',stats.listeningMinutes],['today-articles',stats.completedArticles],['total-study-hours',stats.studyHours.toFixed(1)]])updateText(document.querySelector(`[data-stat="${key}"]`),value)}
 const readerPositions=new Map();
 function render(){
+  if(nativeUiEnabled){nativeEngine?.publishState();return}
   closeSpeedMenu(false);
   app.querySelectorAll('.dialog-shade').forEach(overlay=>overlay.remove());
   const previous=document.querySelector('.main-panel');
@@ -397,6 +404,7 @@ function render(){
 }
 
 function updatePlayer(){
+  if(nativeUiEnabled){nativeEngine?.publishState();nativeEngine?.publishProgress();return}
   const playbackMode=playbackModeDetails(state.playbackMode);document.querySelectorAll('[data-action="playback-mode"]').forEach(button=>{if(button.dataset.playbackMode!==playbackMode.id){button.innerHTML=icon(playbackMode.icon);button.dataset.playbackMode=playbackMode.id;button.setAttribute('aria-label',playbackMode.label);button.title=playbackMode.label}});
   const homePlayer=document.querySelector('.home-playback'),paper=homePlayer?papers.find(p=>p.id===homePlayer.dataset.paper):getPaper(),wholeSource=paperAudio(paper);
   const samePaper=!homePlayer||state.active?.paper===paper?.id,live=samePaper&&audio.getAttribute('src')===wholeSource;
@@ -416,8 +424,8 @@ function seekPlayback(value){
 }
 let readerScrollUntil=0;
 for(const eventName of ['wheel','touchmove'])app.addEventListener(eventName,event=>{if(event.isTrusted&&event.target.closest('.main-panel'))readerScrollUntil=performance.now()+1800},{passive:true});
-function findSentence(){if(!Number.isFinite(getArticle()?.start))return -1;const position=Number(audio.dataset.pendingTime??audio.currentTime)-articleStart(getArticle()),rows=getArticle()?.transcript||[];let index=-1;rows.forEach((s,i)=>{if(s.timed!==false&&s.start<=position)index=i});return index}
-function highlightSentence(forceFollow=false){if(state.route!=='practice'||state.mode!=='intensive'||state.display==='hidden')return;const card=document.querySelector('.transcript-card[data-flow-list]');if(!card)return;const i=findSentence(),old=card.querySelector('.sentence.active'),selectedIndex=Number(old?.dataset.index??-1),changed=i!==selectedIndex;if(changed||(i>=0&&!card.querySelector('.flow-lens'))){old?.classList.remove('active');card.querySelector(`.sentence[data-index="${i}"]`)?.classList.add('active');syncFlowLenses(card)}if(changed||forceFollow){const row=card.querySelector('.sentence.active'),panel=document.querySelector('.main-panel');if(row&&panel&&(forceFollow||(!audio.paused&&performance.now()>readerScrollUntil))){const r=row.getBoundingClientRect(),bounds=panel.getBoundingClientRect();if(r.top<bounds.top+8||r.bottom>bounds.bottom-8)row.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})}}currentSentence=i}
+function findSentence(){if(!Number.isFinite(getArticle()?.start))return -1;const position=Number(audio.dataset.pendingTime??audio.currentTime)-articleStart(getArticle()),rows=getArticle()?.transcript||[];let index=-1;rows.forEach((s,i)=>{if(s.timed!==false&&Number.isFinite(s.start)&&s.start<=position+.000001)index=i});return index}
+function highlightSentence(forceFollow=false){if(nativeUiEnabled)return;if(state.route!=='practice'||state.mode!=='intensive'||state.display==='hidden')return;const card=document.querySelector('.transcript-card[data-flow-list]');if(!card)return;const i=findSentence(),old=card.querySelector('.sentence.active'),selectedIndex=Number(old?.dataset.index??-1),changed=i!==selectedIndex;if(changed||(i>=0&&!card.querySelector('.flow-lens'))){old?.classList.remove('active');card.querySelector(`.sentence[data-index="${i}"]`)?.classList.add('active');syncFlowLenses(card)}if(changed||forceFollow){const row=card.querySelector('.sentence.active'),panel=document.querySelector('.main-panel');if(row&&panel&&(forceFollow||(!audio.paused&&performance.now()>readerScrollUntil))){const r=row.getBoundingClientRect(),bounds=panel.getBoundingClientRect();if(r.top<bounds.top+8||r.bottom>bounds.bottom-8)row.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})}}currentSentence=i}
 async function togglePlay(){const url=sourceAudio(),key=audioKey();if(!url){toast('请先导入音频');return}if(!audio.paused&&!audio.error){audio.pause();return}
   const pending=audio.dataset.pendingTime;
   const target=audio.ended?0:pending!==undefined?Number(pending):audio.currentTime>0?audio.currentTime:state.positions[key]??0;
@@ -432,15 +440,87 @@ async function togglePlay(){const url=sourceAudio(),key=audioKey();if(!url){toas
     toast('播放失败，点播放重试');
   }
 }
+function cancelNativeQuizAdvance(){if(nativeQuizAdvance){clearTimeout(nativeQuizAdvance.timer);nativeQuizAdvance=null}}
+function answerQuestion(index,choice){const q=questions()[index];if(!Number.isInteger(index)||!q||getAnswer(q)?.submitted||!q.options.some(option=>option.id===choice))return false;state.answers[answerKey(q)]={choice,submitted:false};openQuestions.delete(index);persist();refreshQuiz(index);return true}
+function toggleBookmark(button=null){const key=materialKey();if(!getArticle())return;state.bookmarks=state.bookmarks.includes(key)?state.bookmarks.filter(k=>k!==key):[...state.bookmarks,key];persist();if(button){button.classList.toggle('active',state.bookmarks.includes(key));button.setAttribute('aria-pressed',String(state.bookmarks.includes(key)));button.setAttribute('aria-label',state.bookmarks.includes(key)?'取消收藏':'收藏文章')}nativeEngine?.publishState()}
+async function finishSubmittedArticle(expected){
+  if(expected&&(state.route!=='practice'||state.mode!=='exam'||materialKey()!==expected))return;
+  const paper=getPaper(),article=getArticle();if(!paper||!article)return;
+  const next=paper.articles.slice(paper.articles.indexOf(article)+1).find(item=>item.questions?.length);
+  if(next){const playing=!audio.paused;state.active={paper:paper.id,article:next.id};state.questionIndices[materialKey()]=0;quizResult=false;resetQuestionDisclosure();currentSentence=-1;persist();render();setAudio(Number.isFinite(next.start)?articleStart(next):undefined);if(playing)await audio.play();document.querySelector('.question-toggle')?.focus({preventScroll:true})}
+  else{quizResult=true;audio.pause();savePosition();render()}
+  nativeEngine?.publishProgress(true);
+}
+async function submitCurrentArticle(){
+  const qs=questions();if(!qs.length||!qs.every(hasChoice)||!qs.some(q=>!getAnswer(q)?.submitted))return;
+  const at=Date.now();for(const q of qs){const answer=getAnswer(q);if(!answer.submitted){answer.submitted=true;answer.at=at;recordQuestionSubmission(state,answerKey(q),at)}}recordArticleCompletion(state,paperId(),getArticle(),at);openQuestions.clear();persist();
+  if(nativeUiEnabled){cancelNativeQuizAdvance();const expected=materialKey();nativeQuizAdvance={timer:setTimeout(()=>{nativeQuizAdvance=null;finishSubmittedArticle(expected).catch(error=>toast(error.message||'无法打开下一篇'))},900)};render()}
+  else await finishSubmittedArticle();
+}
+let nativeProfileKey='',nativeProfileCache=null;
+function nativeProfileState(){
+  const stats=activitySummary(state),hours=Number(stats.studyHours.toFixed(1));
+  const completed=Object.entries(state.articleCompletions).sort((a,b)=>b[1].last-a[1].last);
+  const key=JSON.stringify([stats.date,stats.listeningMinutes,stats.completedArticles,stats.completedQuestions,hours,completed.map(([id,value])=>[id,value.last])]);
+  if(key!==nativeProfileKey||!nativeProfileCache){nativeProfileKey=key;nativeProfileCache={todayMinutes:stats.listeningMinutes,todayArticles:stats.completedArticles,totalHours:hours,activity:activityCalendar(state).weeks.flat().filter(day=>day.inRange).map(day=>({date:day.date,count:day.count})),recent:completed.map(([key])=>{let ids;try{ids=JSON.parse(key)}catch{return null}const paper=papers.find(p=>p.id===ids[0]),article=paper?.articles.find(a=>a.id===ids[1]);return article?{paper:paper.id,article:article.id,paperTitle:paper.title,articleTitle:materialTitle(article.title)}:null}).filter(Boolean).slice(0,4)}}
+  return nativeProfileCache;
+}
+function readNativeCatalog(){
+  const collections=new Map();
+  return {papers:papers.map(paper=>{const collection=paperCollection(paper);collections.set(collection.id,collection);return {id:paper.id,title:paper.title,year:paper.year??null,collection,duration:paperDuration(paper)||0,audioAvailable:!!paperAudio(paper),articles:paper.articles.map(article=>({id:article.id,title:materialTitle(article.title),section:String(article.title||'').match(/Section\s+[A-Z]/i)?.[0]||'',type:article.type||'',start:Number.isFinite(article.start)?article.start:null,end:Number.isFinite(article.end)?article.end:null,duration:Number.isFinite(article.start)&&Number.isFinite(article.end)?article.end-article.start:0,transcript:(article.transcript||[]).map(row=>({en:row.en||'',zh:row.zh||'',start:Number.isFinite(article.start)&&Number.isFinite(row.start)?article.start+row.start:null,end:Number.isFinite(article.start)&&Number.isFinite(row.end)?article.start+row.end:null,relativeStart:Number.isFinite(row.start)?row.start:null,relativeEnd:Number.isFinite(row.end)?row.end:null,timed:row.timed!==false&&Number.isFinite(article.start)&&Number.isFinite(row.start)})),questions:(article.questions||[]).map((question,index)=>({id:question.id,number:question.number??index+1,options:question.options.map(option=>({id:option.id,key:option.id,text:option.text})),answer:question.answer||null}))}))}}),get collections(){return [...collections.values()]}};
+}
+function readNativeState(){
+  const qs=questions().map((question,index)=>nativeQuestionState(question,getAnswer(question),index)),paper=getPaper(),article=getArticle();
+  const selected=selectedPaper(),home=homeMaterial(),focus=home.article?{paper:home.paper.id,article:home.article.id}:null,progress=readNativeProgress();
+  return {route:state.route,theme:state.theme,mode:state.mode,display:state.display,speed:state.speed,playbackMode:state.playbackMode,active:state.active?{...state.active}:null,selectedPaper:selected?.id||null,homeFocus:focus,bookmarked:!!article&&state.bookmarks.includes(materialKey()),bookmarks:state.bookmarks.slice(),answers:qs.map(q=>({question:q.id,index:q.index,choice:q.choice,submitted:q.submitted,correct:q.correct,correctOption:q.answer})),questions:qs,canSubmit:qs.length>0&&qs.every(q=>!!q.choice)&&qs.some(q=>!q.submitted),complete:qs.length>0&&qs.every(q=>q.submitted),resultVisible:quizResult,feedbackPending:!!nativeQuizAdvance,openQuestions:[...openQuestions],profile:nativeProfileState(),player:{playing:progress.playing,loading:progress.playing&&audio.readyState<3,error:audio.error?String(audio.error.message||'音频播放失败'):null,sourceAvailable:!!paperAudio(state.route==='home'?selected:paper)},notice:nativeNotice,busy,importWarnings:nativeImportWarnings.slice(),lastImport:state.lastImport};
+}
+function readNativeProgress(){const paper=state.route==='home'?selectedPaper():getPaper(),live=state.active?.paper===paper?.id&&audio.getAttribute('src')===paperAudio(paper),home=homeMaterial(),article=state.route==='home'?home.article:getArticle();const time=live?Number(audio.dataset.pendingTime??audio.currentTime)||0:Number(state.positions[JSON.stringify([paper?.id,'paper'])])||0;return {time,duration:live&&Number.isFinite(audio.duration)?audio.duration:paperDuration(paper)||0,playing:live&&!audio.paused,speed:state.speed,playbackMode:state.playbackMode,activeSentence:live&&article?.id===getArticle()?.id?findSentence():-1,paper:paper?.id||null,article:article?.id||null}}
+function prepareNativeHomePlayer(){if(state.route==='home'){const {paper,article}=homeMaterial();if(paper&&article)prepareHomePlayback(paper.id,article.id)}}
+async function performNativeAction(action,payload){
+  if(!nativeReady&&action!=='theme')throw new Error('材料正在载入');
+  if(['nav','back','open','home-play','material-play','mark-paper','mode','restart-quiz','toggle-question','scrub-start'].includes(action))cancelNativeQuizAdvance();
+  const p=payload.paperId??payload.paper,a=payload.articleId??payload.article,value=payload.value;
+  const material=()=>{const paper=papers.find(item=>item.id===p),article=paper?.articles.find(item=>item.id===a);if(!paper||!article)throw new Error('材料不存在');return {paper,article}};
+  settleStudyClock();nativeNotice='';
+  try{switch(action){
+    case 'back':if(state.route!=='home')nav('home');break;
+    case 'nav':if(!['home','library','practice','profile'].includes(payload.route)||payload.route==='practice'&&!getArticle())throw new Error('无效页面');nav(payload.route);break;
+    case 'open':material();selectMaterial(p,a);break;
+    case 'select-paper':if(!papers.some(item=>item.id===p))throw new Error('套卷不存在');choosePaper(p);break;
+    case 'home-play':case 'material-play':{const {article}=material(),marker=payload.marker===undefined?action==='material-play':payload.marker===true||payload.marker==='true';if(marker&&!Number.isFinite(article.start))throw new Error('本篇暂无可靠进度标记');await playAtHome(p,a,marker);break}
+    case 'mark-paper':{const {article}=material();if(!Number.isFinite(article.start))throw new Error('本篇暂无可靠进度标记');markAtHome(p,a);break}
+    case 'play':prepareNativeHomePlayer();if(!getArticle()){const selected=selectedPaper(),first=selected?.articles[0];if(first)prepareHomePlayback(selected.id,first.id)}await togglePlay();break;
+    case 'pause':audio.pause();break;
+    case 'scrub-start':nativeRangeActive=true;break;
+    case 'scrub-end':{nativeRangeActive=false;const key=deferredPlaybackKey;deferredPlaybackKey=null;if(key&&key===fullListeningKey()&&audio.ended)await advancePlayback();break}
+    case 'seek':if(!Number.isFinite(Number(payload.time)))throw new Error('无效播放位置');prepareNativeHomePlayer();if(sourceAudio())seekPlayback(Number(payload.time));break;
+    case 'seek-relative':if(!Number.isFinite(Number(payload.seconds)))throw new Error('无效播放位置');prepareNativeHomePlayer();if(sourceAudio())seekPlayback(Number(audio.dataset.pendingTime??audio.currentTime)+Number(payload.seconds));break;
+    case 'sentence':{const index=Number(payload.index),row=getArticle()?.transcript[index];if(!Number.isInteger(index)||!row||row.timed===false||!Number.isFinite(row.start)||!Number.isFinite(getArticle()?.start))throw new Error('本句暂无可靠时间标记');settleListeningCoverage(true);seekPlayback(sentenceTime(getArticle(),row));currentSentence=index;await togglePlayIfPaused();break}
+    case 'mode':{const mode=value??payload.mode;if(!['intensive','exam'].includes(mode))throw new Error('无效练习模式');switchMode(mode);break}
+    case 'display':{const display=value??payload.display;if(!['hidden','original','bilingual'].includes(display))throw new Error('无效原文模式');state.display=display;persist();render();break}
+    case 'theme':{const theme=value??payload.theme;if(!['light','dark'].includes(theme))throw new Error('无效主题');state.theme=theme;persist();applyTheme();break}
+    case 'speed':{const speed=value??payload.speed;if(speed!==undefined&&!playbackSpeeds.includes(Number(speed)))throw new Error('无效倍速');setPlaybackSpeed(speed??playbackSpeeds[(playbackSpeeds.indexOf(state.speed)+1)%playbackSpeeds.length]);break}
+    case 'playback-mode':{const mode=value??payload.playbackMode;if(mode!==undefined&&!['sequential','repeat','shuffle'].includes(mode))throw new Error('无效播放模式');state.playbackMode=mode??nextPlaybackMode(state.playbackMode);persist();updatePlayer();break}
+    case 'bookmark':toggleBookmark();break;
+    case 'toggle-question':{const index=Number(payload.index);if(!Number.isInteger(index)||!questions()[index])throw new Error('题目不存在');if(openQuestions.has(index))openQuestions.delete(index);else openQuestions.add(index);render();break}
+    case 'answer':if(!answerQuestion(Number(payload.index),payload.optionId??payload.choice??payload.option))throw new Error('无法修改本题答案');break;
+    case 'submit-article':await submitCurrentArticle();break;
+    case 'view-result':if(questions().length&&questions().every(q=>getAnswer(q)?.submitted)){cancelNativeQuizAdvance();quizResult=true;settleListeningCoverage(true);audio.pause();savePosition();render()}break;
+    case 'restart-quiz':for(const question of questions())delete state.answers[answerKey(question)];openQuestions.clear();setQuestion(0);break;
+    case 'import':case 'choose-folder':{const mode=payload.mode||'intensive';if(!['intensive','exam'].includes(mode))throw new Error('无效导入模式');await chooseFolder(mode);break}
+    case 'export':downloadRecord();break;
+    default:throw new Error('不支持的操作：'+action);
+  }}finally{settleStudyClock()}
+}
 function setQuestion(i){if(!Number.isInteger(i)||!questions()[i])return;settleListeningCoverage(true);const previous=getQuestion(),changed=i!==qIndex();savePosition();state.questionIndices[materialKey()]=i;quizResult=false;openQuestions.add(i);persist();if(document.querySelector('.quiz-card'))refreshQuiz(i);else render();resetListeningAnchor();updatePlayer()}
 function downloadRecord(){const text=JSON.stringify({version:1,exportedAt:new Date().toISOString(),state},null,2);if(window.Android?.exportText){window.Android.exportText('listenly-progress.json',text);return}const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='listenly-progress.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 let dialogTrigger=null;
 function closeDialog(){const shade=document.querySelector('.dialog-shade:not(.is-closing)');if(!shade)return;dismissOverlay(shade,shade.querySelector('.dialog'));if(dialogTrigger?.isConnected)dialogTrigger.focus();dialogTrigger=null}
-function dialog(html){document.querySelectorAll('.dialog-shade').forEach(shade=>shade.remove());dialogTrigger=document.activeElement;const el=document.createElement('div');el.className='dialog-shade';el.innerHTML=`<section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">${html}</section>`;app.append(el);syncGlass(el);animateOverlay(el.querySelector('.dialog'));el.querySelector('button')?.focus()}
+function dialog(html){if(nativeUiEnabled){nativeEngine?.publishState();return}document.querySelectorAll('.dialog-shade').forEach(shade=>shade.remove());dialogTrigger=document.activeElement;const el=document.createElement('div');el.className='dialog-shade';el.innerHTML=`<section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">${html}</section>`;app.append(el);syncGlass(el);animateOverlay(el.querySelector('.dialog'));el.querySelector('button')?.focus()}
 function importDialog(){dialog(`<div class="dialog-top"><h2 id="dialog-title">导入材料</h2><button class="icon-btn" data-action="close-dialog" aria-label="关闭">${icon('close')}</button></div><button class="import-choice" data-action="choose-folder" data-mode="intensive">${icon('headphones')}<div><strong>精听文件夹</strong><span>整套音频 · 分句原文 · 翻译</span></div>${icon('chevron')}</button><button class="import-choice" data-action="choose-folder" data-mode="exam">${icon('quiz')}<div><strong>做题文件夹</strong><span>整套音频 · 进度标记 · 题目选项</span></div>${icon('chevron')}</button>`)}
-function setBusy(value,message='正在整理听力材料…'){busy=value;document.querySelector('.busy')?.remove();if(value){const el=document.createElement('div');el.className='busy';el.innerHTML=`<div class="spinner"></div><span>${esc(message)}</span>`;document.body.append(el)}}
+function setBusy(value,message='正在整理听力材料…'){busy=value;if(nativeUiEnabled){if(value)nativeNotice=message;nativeEngine?.publishState();return}document.querySelector('.busy')?.remove();if(value){const el=document.createElement('div');el.className='busy';el.innerHTML=`<div class="spinner"></div><span>${esc(message)}</span>`;document.body.append(el)}}
 async function chooseFolder(mode){if(busy)return;importMode=mode;closeDialog();if(window.Android?.importFolder){window.Android.importFolder(mode);return}const input=document.querySelector('#folder-input');input.value='';input.click()}
-async function processImport(input,silent=false,beforeCommit=null){if(!silent)setBusy(true);try{if(silent&&input.id&&state.rejectedImports.includes(input.id))return null;const restore=silent;const parsed=await parseFolder(input,{restore});if(!restore&&parsed.papers.some(paper=>!paperAudio(normalizePaperTimeline(paper)))){parsed.rejected=true;parsed.warnings.unshift({code:'PAPER_AUDIO_REQUIRED',message:'请选择整套音频与篇章进度标记，分篇切片不再用于播放。'})}if(!parsed.rejected&&!restore&&!(input.id&&state.validatedImports.includes(input.id))){const checked=await validateImportedIntensiveMedia(parsed.papers,{requireTranscript:input.mode!=='exam'});if(checked.rejected){parsed.rejected=true;parsed.warnings.push(...checked.warnings)}}if(parsed.rejected){releaseMappedImport(input);if(input.id&&input.intensiveStandard===2){state.rejectedImports=[...new Set([...state.rejectedImports,input.id])];persist()}if(!silent)toast(parsed.warnings.find(w=>w.message)?.message||'精听材料需包含逐句时间戳');return parsed}if(beforeCommit)await beforeCommit();if(!restore&&input.id)state.validatedImports=[...new Set([...state.validatedImports,input.id])];const merged=mergePapers(papers,parsed.papers);papers=merged.papers.map(normalizePaperTimeline);migrateArticleCompletions(state,papers);const warnings=[...parsed.warnings,...merged.warnings];state.lastImport={name:input.name,count:parsed.papers.length,date:new Date().toISOString()};persist();if(!silent){render();toast(`已导入 ${parsed.papers.length} 套材料，两种模式自动关联`);if(warnings.length)dialog(`<div class="dialog-top"><h2 id="dialog-title">材料已整理</h2><button class="icon-btn" data-action="close-dialog" aria-label="关闭">${icon('close')}</button></div><p>已导入 ${parsed.papers.length} 套材料。以下内容需要补充或检查：</p><ul class="warning-list">${warnings.slice(0,30).map(w=>`<li>${esc(typeof w==='string'?w:w.message||JSON.stringify(w))}</li>`).join('')}</ul><button class="primary-btn footer-button" data-action="close-dialog">开始练习</button>`)}return parsed}catch(error){releaseMappedImport(input);if(!silent)toast(`导入失败：${error.message}`);console.warn('Import',error);return null}finally{if(!silent)setBusy(false)}}
+async function processImport(input,silent=false,beforeCommit=null){if(!silent)setBusy(true);try{if(silent&&input.id&&state.rejectedImports.includes(input.id))return null;const restore=silent;const parsed=await parseFolder(input,{restore});if(!restore&&parsed.papers.some(paper=>!paperAudio(normalizePaperTimeline(paper)))){parsed.rejected=true;parsed.warnings.unshift({code:'PAPER_AUDIO_REQUIRED',message:'请选择整套音频与篇章进度标记，分篇切片不再用于播放。'})}if(!parsed.rejected&&!restore&&!(input.id&&state.validatedImports.includes(input.id))){const checked=await validateImportedIntensiveMedia(parsed.papers,{requireTranscript:input.mode!=='exam'});if(checked.rejected){parsed.rejected=true;parsed.warnings.push(...checked.warnings)}}if(parsed.rejected){releaseMappedImport(input);if(input.id&&input.intensiveStandard===2){state.rejectedImports=[...new Set([...state.rejectedImports,input.id])];persist()}if(!silent)toast(parsed.warnings.find(w=>w.message)?.message||'精听材料需包含逐句时间戳');return parsed}if(beforeCommit)await beforeCommit();if(!restore&&input.id)state.validatedImports=[...new Set([...state.validatedImports,input.id])];const merged=mergePapers(papers,parsed.papers);papers=merged.papers.map(normalizePaperTimeline);migrateArticleCompletions(state,papers);const warnings=[...parsed.warnings,...merged.warnings];if(nativeUiEnabled&&!silent){nativeImportWarnings=warnings.map(w=>typeof w==='string'?w:w.message||String(w.code||''));nativeEngine?.publishCatalog()}state.lastImport={name:input.name,count:parsed.papers.length,date:new Date().toISOString()};persist();if(!silent){render();toast(`已导入 ${parsed.papers.length} 套材料，两种模式自动关联`);if(warnings.length)dialog(`<div class="dialog-top"><h2 id="dialog-title">材料已整理</h2><button class="icon-btn" data-action="close-dialog" aria-label="关闭">${icon('close')}</button></div><p>已导入 ${parsed.papers.length} 套材料。以下内容需要补充或检查：</p><ul class="warning-list">${warnings.slice(0,30).map(w=>`<li>${esc(typeof w==='string'?w:w.message||JSON.stringify(w))}</li>`).join('')}</ul><button class="primary-btn footer-button" data-action="close-dialog">开始练习</button>`)}return parsed}catch(error){releaseMappedImport(input);if(!silent)toast(`导入失败：${error.message}`);console.warn('Import',error);return null}finally{if(!silent)setBusy(false)}}
 function db(){return new Promise((resolve,reject)=>{const request=indexedDB.open('listenly.files',1);request.onupgradeneeded=()=>request.result.createObjectStore('imports',{keyPath:'id'});request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})}
 async function storeFiles(item){const database=await db();await new Promise((resolve,reject)=>{const tx=database.transaction('imports','readwrite');tx.objectStore('imports').put(item);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)});database.close()}
 async function readImports(){const database=await db();const items=await new Promise((resolve,reject)=>{const request=database.transaction('imports').objectStore('imports').getAll();request.onsuccess=()=>resolve(orderedImports(request.result));request.onerror=()=>reject(request.error)});database.close();return items}
@@ -471,12 +551,10 @@ app.addEventListener('click',async event=>{const button=event.target.closest('[d
   case 'seek-relative':{const homePlayer=button.closest('.home-playback');if(homePlayer)prepareHomePlayback(homePlayer.dataset.paper,homePlayer.dataset.article);if(sourceAudio())seekPlayback(Number(audio.dataset.pendingTime??audio.currentTime)+Number(button.dataset.seconds));break}
   case 'sentence':{const row=getArticle()?.transcript[Number(button.dataset.index)];if(row&&row.timed!==false&&Number.isFinite(getArticle()?.start)){settleListeningCoverage(true);seekPlayback(sentenceTime(getArticle(),row));currentSentence=Number(button.dataset.index);await togglePlayIfPaused()}break}
   case 'playback-mode':state.playbackMode=nextPlaybackMode(state.playbackMode);persist();updatePlayer();toast(playbackModeDetails(state.playbackMode).label);break;
-  case 'bookmark':{const key=materialKey();state.bookmarks=state.bookmarks.includes(key)?state.bookmarks.filter(k=>k!==key):[...state.bookmarks,key];persist();button.classList.toggle('active',state.bookmarks.includes(key));button.setAttribute('aria-pressed',String(state.bookmarks.includes(key)));button.setAttribute('aria-label',state.bookmarks.includes(key)?'取消收藏':'收藏文章');break}
+  case 'bookmark':toggleBookmark(button);break;
   case 'toggle-question':{const index=Number(button.dataset.index);if(openQuestions.has(index)){openQuestions.delete(index);refreshQuiz(index)}else setQuestion(index);break}
-  case 'answer':{const index=Number(button.dataset.index),q=questions()[index];if(q&&!getAnswer(q)?.submitted&&q.options.some(o=>o.id===button.dataset.option)){state.answers[answerKey(q)]={choice:button.dataset.option,submitted:false};openQuestions.delete(index);persist();refreshQuiz(index)}break}
-  case 'submit-article':{const qs=questions();if(qs.length&&qs.every(hasChoice)&&qs.some(q=>!getAnswer(q)?.submitted)){const at=Date.now();for(const q of qs){const answer=getAnswer(q);if(!answer.submitted){answer.submitted=true;answer.at=at;recordQuestionSubmission(state,answerKey(q),at)}}recordArticleCompletion(state,paperId(),getArticle(),at);openQuestions.clear();persist();const paper=getPaper(),next=paper.articles.slice(paper.articles.indexOf(getArticle())+1).find(article=>article.questions?.length);
-    if(next){const playing=!audio.paused;state.active={paper:paper.id,article:next.id};state.questionIndices[materialKey()]=0;quizResult=false;resetQuestionDisclosure();currentSentence=-1;persist();render();setAudio(Number.isFinite(next.start)?articleStart(next):undefined);if(playing)await audio.play();document.querySelector('.question-toggle')?.focus({preventScroll:true})}
-    else{quizResult=true;audio.pause();savePosition();render()}}break}
+  case 'answer':answerQuestion(Number(button.dataset.index),button.dataset.option);break;
+  case 'submit-article':await submitCurrentArticle();break;
   case 'view-result':if(questions().length&&questions().every(q=>getAnswer(q)?.submitted)){quizResult=true;settleListeningCoverage(true);audio.pause();savePosition();render()}break;
   case 'restart-quiz':for(const q of questions())delete state.answers[answerKey(q)];openQuestions.clear();setQuestion(0);break;
   case 'import':importDialog();break;
@@ -517,7 +595,7 @@ audio.addEventListener('ratechange',()=>{settleListeningCoverage();resetListenin
 audio.addEventListener('timeupdate',()=>{settleListeningCoverage();const now=performance.now();if(!audio.paused&&!audio.seeking){if(lastPlaybackTick){const seconds=Math.min(2,(now-lastPlaybackTick)/1000);recordListeningSeconds(state,seconds);const heard=articleAtTime(getPaper(),audio.currentTime)||getArticle(),key=keyFor(paperId(),heard?.id);state.activity[key]??={seconds:0,last:0};state.activity[key].seconds+=seconds;state.activity[key].last=Date.now()}lastPlaybackTick=now}
   if(!audio.paused&&state.mode==='intensive'){
     const marked=articleAtTime(getPaper(),audio.currentTime);
-    if(marked&&marked.id!==state.active?.article){state.active={paper:paperId(),article:marked.id};state.homeFocus={...state.active};currentSentence=-1;if(state.route==='practice')render();else if(state.route==='home'){const card=document.querySelector('.focus-card');if(card){card.dataset.article=marked.id;card.querySelectorAll('[data-article]').forEach(element=>element.dataset.article=marked.id)}updateHomeSelection();syncFlowLenses(app)}}
+    if(marked&&marked.id!==state.active?.article){state.active={paper:paperId(),article:marked.id};state.homeFocus={...state.active};currentSentence=-1;if(nativeUiEnabled)nativeEngine?.publishState();else if(state.route==='practice')render();else if(state.route==='home'){const card=document.querySelector('.focus-card');if(card){card.dataset.article=marked.id;card.querySelectorAll('[data-article]').forEach(element=>element.dataset.article=marked.id)}updateHomeSelection();syncFlowLenses(app)}}
   }
   highlightSentence();updatePlayer();if(currentAudioKey)state.positions[currentAudioKey]=audio.currentTime;
 });
@@ -525,7 +603,7 @@ let deferredPlaybackKey=null;
 window.addEventListener('listenly-seek-release',()=>{const key=deferredPlaybackKey;deferredPlaybackKey=null;if(key&&key===fullListeningKey()&&audio.ended)advancePlayback().catch(()=>toast('播放失败，点播放重试'))});
 async function advancePlayback(){
   if(state.mode!=='intensive'||!fullListeningKey())return;
-  if(isRangeInteracting()){deferredPlaybackKey=fullListeningKey();return}
+  if(nativeUiEnabled?nativeRangeActive:isRangeInteracting()){deferredPlaybackKey=fullListeningKey();return}
   const paper=getPaper(),available=papers.filter(item=>paperAudio(item)&&paperCollection(item).id===paperCollection(paper).id);let next=paper;
   if(state.playbackMode==='shuffle'){const others=available.filter(item=>item.id!==paper.id);next=others[Math.floor(Math.random()*others.length)]||paper}
   else if(state.playbackMode!=='repeat')next=available[(available.findIndex(item=>item.id===paper.id)+1)%available.length];
@@ -538,6 +616,11 @@ window.listenlyBack=()=>{if(speedMenu){closeSpeedMenu();return true}if(document.
 
 async function init(){try{const response=await fetch('demo.json');if(!response.ok)throw new Error('demo missing');const demo=await response.json();papers=[demo];const bundled=await fetch('bundled-library.json').catch(()=>null);if(bundled?.ok){const data=await bundled.json();papers=mergePapers(data.papers||[],papers).papers}
   if(window.Android?.getImports){let manifests=[];try{manifests=JSON.parse(window.Android.getImports())}catch{}for(const manifest of orderedImports(manifests))await processImport(manifest,true)}else{try{for(const item of await readImports())await processImport(await mapBrowserImport(item),true)}catch(error){console.warn('Local files unavailable',error)}}
-  papers=papers.map(normalizePaperTimeline);if(state.active&&!getArticle())state.active=null;if(state.active&&state.positions[audioKey()]===undefined){const old=state.positions[JSON.stringify([paperId(),getArticle()?.id,'intensive','passage'])];const migrated=migrateLegacyPosition(getArticle(),old);if(Number.isFinite(migrated))state.positions[audioKey()]=migrated}state.selectedPaper=selectedPaper()?.id||null;migrateArticleCompletions(state,papers);render();if(state.active)setAudio();persist();
-}catch(error){console.error(error);app.innerHTML='<div class="app-shell"><div class="empty">材料加载失败，请重新打开应用。</div></div>'}}
-mountWallpaper();mountGlass();mountFlowLenses();applyTheme();init();
+  papers=papers.map(normalizePaperTimeline);if(state.active&&!getArticle())state.active=null;if(state.active&&state.positions[audioKey()]===undefined){const old=state.positions[JSON.stringify([paperId(),getArticle()?.id,'intensive','passage'])];const migrated=migrateLegacyPosition(getArticle(),old);if(Number.isFinite(migrated))state.positions[audioKey()]=migrated}state.selectedPaper=selectedPaper()?.id||null;migrateArticleCompletions(state,papers);render();if(state.active)setAudio();persist();nativeReady=true;nativeEngine?.setReady(true);
+}catch(error){console.error(error);if(nativeUiEnabled){nativeNotice='材料加载失败，请重新打开应用。';nativeEngine?.publishState();return}app.innerHTML='<div class="app-shell"><div class="empty">材料加载失败，请重新打开应用。</div></div>'}}
+if(nativeUiEnabled){
+  nativeEngine=createNativeEngine({android:window.Android,readCatalog:readNativeCatalog,readState:readNativeState,readProgress:readNativeProgress,dispatch:performNativeAction});
+  window.listenlyNativeCommand=(action,payload)=>nativeEngine.command(action,payload);
+  window.listenlyNativeSnapshot=()=>nativeEngine.snapshot();
+}else{mountWallpaper();mountGlass();mountFlowLenses()}
+applyTheme();init();

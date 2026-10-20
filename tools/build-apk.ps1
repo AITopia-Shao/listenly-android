@@ -2,10 +2,13 @@ param(
     [string]$SdkPath = 'C:\Program Files (x86)\Android\android-sdk',
     [string]$JdkPath = 'C:\Program Files\Android\openjdk\jdk-21.0.8',
     [string]$OutputPath = '',
+    [string]$GradleInitScript = '',
     [switch]$Lite,
     [switch]$Demo
 )
 $ErrorActionPreference = 'Stop'
+$SdkPath = [IO.Path]::GetFullPath($SdkPath)
+$JdkPath = [IO.Path]::GetFullPath($JdkPath)
 if ($Demo -and $Lite) { throw '-Demo and -Lite cannot be combined.' }
 function Invoke-BuildTool([string]$Executable, [string[]]$Arguments) {
     & $Executable @Arguments
@@ -27,8 +30,8 @@ $taskTools = Get-ChildItem -LiteralPath (Join-Path $SdkPath 'build-tools') -Dire
     Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'aapt2.exe') } |
     Sort-Object { [version]($_.Name -replace '-.*$', '') } -Descending | Select-Object -First 1
 $taskPlatform = Get-ChildItem -LiteralPath (Join-Path $SdkPath 'platforms') -Directory |
-    Where-Object { $_.Name -match '^android-\d+$' } |
-    Sort-Object { [int]($_.Name -replace '^android-', '') } -Descending | Select-Object -First 1
+    Where-Object { $_.Name -match '^android-\d+(?:\.\d+)?$' } |
+    Sort-Object { [version](($_.Name -replace '^android-', '') + $(if ($_.Name -notmatch '\.') { '.0' } else { '' })) } -Descending | Select-Object -First 1
 if (!$taskTools -or !$taskPlatform) { throw 'Android SDK platforms / build-tools not found.' }
 $taskJar = Join-Path $taskPlatform.FullName 'android.jar'
 $taskJava = Join-Path $JdkPath 'bin\java.exe'
@@ -137,6 +140,21 @@ if ($Lite) {
     [IO.File]::WriteAllText((Join-Path $taskBuild 'main\assets\web\bundled-library.json'),
         ($taskBundle | ConvertTo-Json -Depth 100 -Compress), (New-Object Text.UTF8Encoding($false)))
 }
+$taskStagedWeb = Join-Path $taskBuild 'main\assets\web'
+foreach ($taskNotice in @(@('LICENSE','LICENSE.txt'), @('THIRD_PARTY_NOTICES.md','THIRD_PARTY_NOTICES.txt'))) {
+    $taskNoticeSource = Join-Path $taskRoot $taskNotice[0]
+    if (Test-Path -LiteralPath $taskNoticeSource -PathType Leaf) {
+        Copy-Item -LiteralPath $taskNoticeSource -Destination (Join-Path $taskStagedWeb $taskNotice[1]) -Force
+    }
+}
+$taskLicenses = Join-Path $taskRoot 'LICENSES'
+if (Test-Path -LiteralPath $taskLicenses -PathType Container) {
+    $taskStagedLicenses = Join-Path $taskStagedWeb 'licenses'
+    New-Item -ItemType Directory -Force -Path $taskStagedLicenses | Out-Null
+    foreach ($taskLicense in Get-ChildItem -LiteralPath $taskLicenses -File) {
+        Copy-Item -LiteralPath $taskLicense.FullName -Destination (Join-Path $taskStagedLicenses $taskLicense.Name) -Force
+    }
+}
 # The two user-supplied wallpapers remain in a local build cache. Public demo
 # assets always retain the original vector backgrounds shipped in the repo.
 $taskWallpaperCache = Join-Path $taskRoot '.build\personal-wallpapers'
@@ -144,37 +162,55 @@ if (!$Demo -and (Test-Path -LiteralPath ($taskWallpaperCache + '.lock'))) { thro
 if (!$Demo -and (Test-Path -LiteralPath (Join-Path $taskWallpaperCache 'sources.json'))) {
     Invoke-BuildTool $taskPythonCommand.Source @((Join-Path $taskRoot 'tools\fetch-personal-wallpapers.py'), '--stage-web', (Join-Path $taskBuild 'main\assets\web'))
 }
-# The portable build compiles against the newest installed Android stubs. The code
-# gates modern APIs at runtime; target SDK stays 37. Android Studio compiles at 37.
-Write-Host "Compiling with $($taskPlatform.Name), targeting API 37; tools $($taskTools.Name)"
-$taskManifest = Join-Path $taskBuild 'AndroidManifest.xml'
-[xml]$taskXml = Get-Content -LiteralPath (Join-Path $taskRoot 'app\src\main\AndroidManifest.xml') -Raw -Encoding UTF8
-$taskXml.manifest.SetAttribute('package','cn.listenly.app')
-$taskXml.manifest.SetAttribute('versionCode','http://schemas.android.com/apk/res/android',$taskVersionCode) | Out-Null
-$taskXml.manifest.SetAttribute('versionName','http://schemas.android.com/apk/res/android',$taskVersionName) | Out-Null
-$taskXml.manifest.application.SetAttribute('debuggable','http://schemas.android.com/apk/res/android','true') | Out-Null
-$taskXml.Save($taskManifest)
-$taskCompiled = Join-Path $taskBuild 'compiled'
-New-Item -ItemType Directory -Force -Path $taskCompiled | Out-Null
-$taskBase = Join-Path $taskBuild 'base.apk'
-foreach ($taskResource in Get-ChildItem -LiteralPath (Join-Path $taskBuild 'main\res') -File -Recurse) {
-    Invoke-BuildTool (Join-Path $taskTools.FullName 'aapt2.exe') @('compile',$taskResource.FullName,'-o',$taskCompiled)
+# Compile the actual native Kotlin/Compose/Miuix UI and the unchanged Java engine.
+# Assets stay in this edition-specific staging directory, so Gradle's public
+# default can never pull the private corpus into CI/demo builds.
+$taskGradle = Join-Path $taskRoot 'gradlew.bat'
+$taskOldJavaHome = $env:JAVA_HOME
+$taskOldAndroidHome = $env:ANDROID_HOME
+$taskOldSdkRoot = $env:ANDROID_SDK_ROOT
+$taskOldGradleHome = $env:GRADLE_USER_HOME
+$taskOldJavaOptions = $env:JAVA_TOOL_OPTIONS
+try {
+    $env:JAVA_HOME = $JdkPath
+    $env:ANDROID_HOME = $SdkPath
+    $env:ANDROID_SDK_ROOT = $SdkPath
+    $env:GRADLE_USER_HOME = Join-Path $taskRoot '.build\miuix-gradle-user'
+    # MSIX sandbox path virtualization does not support JDK AF_UNIX wake pipes.
+    # A nonexistent socket directory makes the JDK use its built-in TCP fallback.
+    # This changes only the build process; it is never part of the Android app.
+    if ($env:CODEX_WINDOWS_SANDBOX_PACKAGE_FAMILY) {
+        $taskSocketFallback = Join-Path $taskRoot '.build\gradle-no-unix-sockets'
+        if (Test-Path -LiteralPath $taskSocketFallback) { throw 'The Gradle socket fallback path must remain absent.' }
+        $env:JAVA_TOOL_OPTIONS = (($taskOldJavaOptions + ' "-Djdk.net.unixdomain.tmpdir=' + $taskSocketFallback + '"').Trim())
+    }
+    Push-Location -LiteralPath $taskRoot
+    try {
+        $taskGradleArgs = @(':app:assembleDebug','--no-daemon',
+            ('-PlistenlyAssetsDir=' + (Join-Path $taskBuild 'main\assets')),
+            '-PlistenlySkipAssetPreparation=true')
+        if ($taskRoot -match '[^\x00-\x7F]') { $taskGradleArgs += '-Pandroid.overridePathCheck=true' }
+        if ($GradleInitScript) {
+            $taskInit = [IO.Path]::GetFullPath($GradleInitScript)
+            if (!(Test-Path -LiteralPath $taskInit -PathType Leaf)) { throw 'Gradle init script does not exist.' }
+            $taskGradleArgs += @('--init-script',$taskInit)
+        }
+        Invoke-BuildTool $taskGradle $taskGradleArgs
+    } finally { Pop-Location }
+} finally {
+    $env:JAVA_HOME = $taskOldJavaHome
+    $env:ANDROID_HOME = $taskOldAndroidHome
+    $env:ANDROID_SDK_ROOT = $taskOldSdkRoot
+    $env:GRADLE_USER_HOME = $taskOldGradleHome
+    $env:JAVA_TOOL_OPTIONS = $taskOldJavaOptions
 }
-$taskFlats = @(Get-ChildItem -LiteralPath $taskCompiled -Filter '*.flat' | ForEach-Object { $_.FullName })
-$taskLinkArgs = @('link','-I',$taskJar,'--manifest',$taskManifest,'--java',(Join-Path $taskBuild 'gen'),'--auto-add-overlay','-o',$taskBase) + $taskFlats
-if (Test-Path -LiteralPath (Join-Path $taskBuild 'main\assets')) { $taskLinkArgs += @('-A',(Join-Path $taskBuild 'main\assets')) }
-Invoke-BuildTool (Join-Path $taskTools.FullName 'aapt2.exe') $taskLinkArgs
-$taskSources = @(Get-ChildItem -LiteralPath (Join-Path $taskBuild 'main\java') -Filter '*.java' -Recurse | ForEach-Object { $_.FullName })
-$taskSources += @(Get-ChildItem -LiteralPath (Join-Path $taskBuild 'gen') -Filter '*.java' -Recurse | ForEach-Object { $_.FullName })
-Invoke-BuildTool $taskJavac (@('--release','8','-encoding','UTF-8','-classpath',$taskJar,'-d',(Join-Path $taskBuild 'classes')) + $taskSources)
-$taskClasses = @(Get-ChildItem -LiteralPath (Join-Path $taskBuild 'classes') -Filter '*.class' -Recurse | ForEach-Object { $_.FullName })
-Invoke-BuildTool $taskJava (@('-cp',(Join-Path $taskTools.FullName 'lib\d8.jar'),'com.android.tools.r8.D8','--min-api','26','--lib',$taskJar,'--output',(Join-Path $taskBuild 'dex')) + $taskClasses)
+$taskBase = Join-Path $taskRoot 'app\build\outputs\apk\debug\app-debug.apk'
+if (!(Test-Path -LiteralPath $taskBase -PathType Leaf)) { throw 'Gradle did not produce the native UI APK.' }
 $taskNormalizedApk = Join-Path $taskBuild 'normalized.apk'
-# .NET Framework's NoCompression may still emit ZIP method 8. Android needs
-# resources.arsc to use actual ZIP_STORED (method 0), so normalize with Python.
-# The helper streams entries and does not buffer the complete audio corpus.
+# Stream the complete Gradle APK, preserving all dex/resources/native libraries.
+# Normalize before 16 KiB ZIP alignment and signing with the existing local key.
 $taskNormalizeTool = Join-Path $taskRoot 'tools\normalize-apk.py'
-Invoke-BuildTool $taskPythonCommand.Source @($taskNormalizeTool,$taskBase,$taskNormalizedApk,'--dex-dir',(Join-Path $taskBuild 'dex'))
+Invoke-BuildTool $taskPythonCommand.Source @($taskNormalizeTool,$taskBase,$taskNormalizedApk)
 $taskAligned = Join-Path $taskBuild 'aligned.apk'
 Invoke-BuildTool (Join-Path $taskTools.FullName 'zipalign.exe') @('-P','16','-f','4',$taskNormalizedApk,$taskAligned)
 $taskKeystore = Join-Path $taskSavedBuild 'debug.keystore'

@@ -5,6 +5,15 @@ on:
   push:
     paths:
       - app/src/main/java/**
+      - app/src/main/kotlin/**
+      - build.gradle
+      - settings.gradle
+      - gradle.properties
+      - gradle/**
+      - gradlew*
+      - LICENSES/**
+      - tests/native-engine*.mjs
+      - tools/android-native-smoke.mjs
       - app/src/main/res/**
       - app/src/main/AndroidManifest.xml
       - app/src/main/assets/web/*.js
@@ -63,6 +72,15 @@ on:
   pull_request:
     paths:
       - app/src/main/java/**
+      - app/src/main/kotlin/**
+      - build.gradle
+      - settings.gradle
+      - gradle.properties
+      - gradle/**
+      - gradlew*
+      - LICENSES/**
+      - tests/native-engine*.mjs
+      - tools/android-native-smoke.mjs
       - app/src/main/res/**
       - app/src/main/AndroidManifest.xml
       - app/src/main/assets/web/*.js
@@ -130,7 +148,7 @@ jobs:
   demo:
     name: Build original English demo and test browser interactions
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -150,7 +168,7 @@ jobs:
         with:
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
       - name: Build the original demo and verify its assets
         run: |
           npm ci --no-audit --no-fund
@@ -177,6 +195,7 @@ jobs:
           npm run test:native-theme
           npm run test:library
           npm run test:paper
+          npm run test:native-engine
       - name: Save the original demo test APK and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -206,13 +225,14 @@ jobs:
             .build/theme-native/browser/
             .build/library-accordion/
             .build/paper-playback/
+            .build/native-engine/
           include-hidden-files: true
           retention-days: 14
 
   runtime:
     name: Install, launch and interact on Android API ${{ matrix.api }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -257,14 +277,14 @@ jobs:
           cmdline-tools-version: '14742923' # Google command-line tools 20.0; also used by emulator-runner
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
       - name: Verify the shared SDK and tool paths
         shell: bash
         run: |
           test "$ANDROID_HOME" = "$ANDROID_SDK_ROOT"
           test "$(command -v sdkmanager)" = "$ANDROID_HOME/cmdline-tools/20.0/bin/sdkmanager"
           test -x "$ANDROID_HOME/cmdline-tools/20.0/bin/avdmanager"
-          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
           test -f "$ANDROID_HOME/build-tools/36.0.0/lib/d8.jar"
           mkdir -p .build/ci
           {
@@ -317,9 +337,7 @@ jobs:
             df -h "$ANDROID_HOME" "$ANDROID_AVD_HOME"
             test "$(df -Pk "$ANDROID_AVD_HOME" | awk 'NR==2 {print $4}')" -ge 8388608
           script: |
-            node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}
-            node tools/android-replay-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}-replay --fixture
-            node tools/android-theme-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}-theme
+            node tools/android-native-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}-native --fixture
       - name: Save the APK and runtime evidence, including failed runs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -330,9 +348,7 @@ jobs:
             .build/ci/build.json
             .build/ci/build.log
             .build/ci/sdk-environment.log
-            .build/runtime-results/api-${{ matrix.api }}/
-            .build/runtime-results/api-${{ matrix.api }}-replay/
-            .build/runtime-results/api-${{ matrix.api }}-theme/
+            .build/runtime-results/api-${{ matrix.api }}-native/
             .build/range-stream-tests/result.json
           include-hidden-files: true
           if-no-files-found: warn

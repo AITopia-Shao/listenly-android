@@ -14,7 +14,7 @@ import shutil
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-WEB_FILES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "paper-timeline.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg")
+WEB_FILES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "paper-timeline.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "native-engine.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg")
 OPTIONAL_WEB_FILES = ("app.compat.js", "compat-polyfills.js")
 FONT_FILES = ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md")
 
@@ -71,8 +71,9 @@ def prepare(output: Path) -> None:
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
-    for directory in ("java", "res"):
-        shutil.copytree(source / directory, output / directory)
+    for directory in ("java", "kotlin", "res"):
+        if (source / directory).is_dir():
+            shutil.copytree(source / directory, output / directory)
     shutil.copyfile(source / "AndroidManifest.xml", output / "AndroidManifest.xml")
     web = output / "assets" / "web"
     (web / "media").mkdir(parents=True)
@@ -82,6 +83,10 @@ def prepare(output: Path) -> None:
     (web / 'fonts').mkdir()
     for filename in FONT_FILES:
         shutil.copyfile(source_web / 'fonts' / filename, web / 'fonts' / filename)
+    # Preserve the complete licenses for Miuix and adapted upstream components.
+    licenses = ROOT / "LICENSES"
+    if licenses.is_dir():
+        shutil.copytree(licenses, web / "licenses")
     (web / "demo.json").write_text(json.dumps(demo, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     for recording in audio_files:
         shutil.copyfile(recording, web / "media" / recording.name)

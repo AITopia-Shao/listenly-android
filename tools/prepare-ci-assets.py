@@ -13,7 +13,7 @@ import struct
 import wave
 
 ROOT = Path(__file__).resolve().parents[1]
-WEB_MODULES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "paper-timeline.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg")
+WEB_MODULES = ("index.html", "app.js", "styles.css", "importer.js", "alignment.js", "paper-timeline.js", "activity.js", "playback-modes.js", "glass.js", "theme.js", "overlays.js", "flow-lens.js", "wallpaper.js", "import-media.js", "native-engine.js", "wallpapers.json", "wallpapers/day.svg", "wallpapers/night.svg", "icons/play-mask.svg", "icons/pause-mask.svg")
 COMPAT_MODULES = ("app.compat.js", "compat-polyfills.js")
 FONT_FILES = ("Inter-Regular.woff2", "Inter-Medium.woff2", "Inter-SemiBold.woff2", "InterVariable.woff2", "OFL.txt", "README.md")
 
@@ -27,8 +27,9 @@ def prepare(output: Path) -> None:
         shutil.rmtree(output)
     output.mkdir(parents=True)
     source = ROOT / "app" / "src" / "main"
-    for directory in ("java", "res"):
-        shutil.copytree(source / directory, output / directory)
+    for directory in ("java", "kotlin", "res"):
+        if (source / directory).is_dir():
+            shutil.copytree(source / directory, output / directory)
     shutil.copyfile(source / "AndroidManifest.xml", output / "AndroidManifest.xml")
     web = output / "assets" / "web"
     web.mkdir(parents=True)
@@ -46,6 +47,10 @@ def prepare(output: Path) -> None:
             shutil.copyfile(module, web / filename)
         elif filename in referenced_scripts:
             raise FileNotFoundError(f"Run npm run build:web before staging: missing {filename}")
+    # Preserve the complete licenses for Miuix and adapted upstream components.
+    licenses = ROOT / "LICENSES"
+    if licenses.is_dir():
+        shutil.copytree(licenses, web / "licenses")
     media = web / "media"
     for filename, destination in (("LICENSE", "LICENSE.txt"), ("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.txt")):
         notice = ROOT / filename

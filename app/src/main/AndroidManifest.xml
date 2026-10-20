@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="37" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Miuix blur is API 33+. NativeLensApi33 isolates every blur reference;
+         Android 26–32 use the same native components with translucent fallback. -->
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="37"
+        tools:overrideLibrary="top.yukonga.miuix.kmp.blur" />
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
