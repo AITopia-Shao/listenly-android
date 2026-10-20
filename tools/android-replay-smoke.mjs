@@ -43,10 +43,17 @@ const closeDialog='(()=>{var shade=document.querySelector(".dialog-shade");if(sh
 const importsExpr='window.Android&&window.Android.getImports?JSON.parse(window.Android.getImports()).map(x=>({mode:x.mode,name:x.name,fileCount:x.files?x.files.length:0})):[]';
 async function scenario(name,fn){const item={name};result.scenarios.push(item);try{await evaluate(closeDialog);item.before=await snapshot();const details=await fn(item);if(details!==undefined)item.details=details;item.after=await snapshot();item.status='passed'}catch(error){item.status='failed';item.error=String(error.stack||error);if(error.playback)item.failedPlayback=error.playback;try{item.after=await snapshot();await writeFile(path.join(root,`${name}.png`),run(['exec-out','screencap','-p'],true))}catch{}}await writeFile(path.join(root,'result.json'),JSON.stringify(result,null,2));console.log(`${name}: ${item.status}`)}
 async function openArticle(id,paper=paperId){
- const collection=paper.startsWith('cet6')?'cet6':paper.startsWith('listenly-original')?'original':'imported';
- await evaluate(`(()=>{if(!document.querySelector('[data-action=nav][data-route=library]'))document.querySelector('[data-action=nav][data-route=home]').click();document.querySelector('[data-action=nav][data-route=library]').click();for(var i=0;i<6;i++){var article=document.querySelector(${JSON.stringify(`[data-action=open][data-paper="${paper}"][data-article="${id}"]`)});if(article){article.click();return}var group=document.querySelector(${JSON.stringify(`[data-action=open-paper][data-paper="${paper}"]`)});if(group){group.click();continue}var collection=document.querySelector(${JSON.stringify(`[data-action=open-collection][data-collection="${collection}"]`)});if(collection){collection.click();continue}var back=document.querySelector('[data-action=library-back]');if(back){back.click();continue}throw Error('Missing collection or paper directory')}throw Error('Article navigation did not finish')})()`);
+ const collection=paper.startsWith('cet6')?'cet6':paper.startsWith('ielts')?'ielts':paper.startsWith('toefl')?'toefl':paper.startsWith('listenly-original')?'original':'imported';
+ await evaluate(`(()=>{if(!document.querySelector('[data-action=nav][data-route=library]'))document.querySelector('[data-action=nav][data-route=home]').click();document.querySelector('[data-action=nav][data-route=library]').click()})()`);
+ for(const selector of [`[data-action=open-collection][data-collection="${collection}"]`,`[data-action=open-paper][data-paper="${paper}"]`]){
+  await poll(`!!document.querySelector(${JSON.stringify(selector)})`);
+  await evaluate(`(()=>{var b=document.querySelector(${JSON.stringify(selector)});if(b.getAttribute('aria-expanded')!=='true')b.click()})()`);
+  await poll(`(()=>{var b=document.querySelector(${JSON.stringify(selector)}),p=document.getElementById(b.getAttribute('aria-controls'));return p&&p.dataset.motionState==='open'})()`);
+ }
+ const selector=`[data-action=open][data-paper="${paper}"][data-article="${id}"]`;await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
  await evaluate(closeDialog);await poll('document.querySelector("#audio").readyState>=1');return snapshot()
 }
+
 async function recoverSystemUi(stage){
  let xml;
  for(let attempt=0;attempt<3;attempt++){

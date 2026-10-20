@@ -1,6 +1,6 @@
 {
   "name": "listenly-android",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,6 +29,8 @@
     "test:speed": "node tests/speed-cycle.test.mjs --demo",
     "test:idle": "node tests/ui-idle.test.mjs --demo",
     "test:theme": "node tests/theme-compositor.test.mjs --demo",
+    "test:native-theme": "node tests/theme-native.test.mjs --demo",
+    "test:library": "node tests/library-accordion.test.mjs --demo",
     "test:paper": "node tests/paper-playback.test.mjs"
   },
   "devDependencies": {

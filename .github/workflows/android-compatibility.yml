@@ -17,6 +17,8 @@ on:
       - app/build.gradle
       - tools/android-smoke.mjs
       - tools/android-replay-smoke.mjs
+      - tools/android-theme-smoke.mjs
+      - tests/library-accordion.test.mjs
       - tools/test-range-stream.py
       - tests/java/**
       - tests/audio-replay.test.mjs
@@ -32,6 +34,7 @@ on:
       - tests/playback-speed.mjs
       - tests/ui-idle.test.mjs
       - tests/theme-compositor.test.mjs
+      - tests/theme-native.test.mjs
       - tests/theme-appearance.mjs
       - tests/paper-playback.test.mjs
       - tests/paper-timeline.test.mjs
@@ -72,6 +75,8 @@ on:
       - app/build.gradle
       - tools/android-smoke.mjs
       - tools/android-replay-smoke.mjs
+      - tools/android-theme-smoke.mjs
+      - tests/library-accordion.test.mjs
       - tools/test-range-stream.py
       - tests/java/**
       - tests/audio-replay.test.mjs
@@ -87,6 +92,7 @@ on:
       - tests/playback-speed.mjs
       - tests/ui-idle.test.mjs
       - tests/theme-compositor.test.mjs
+      - tests/theme-native.test.mjs
       - tests/theme-appearance.mjs
       - tests/paper-playback.test.mjs
       - tests/paper-timeline.test.mjs
@@ -168,6 +174,8 @@ jobs:
           npm run test:speed
           npm run test:idle
           npm run test:theme
+          npm run test:native-theme
+          npm run test:library
           npm run test:paper
       - name: Save the original demo test APK and evidence
         if: always()
@@ -195,6 +203,8 @@ jobs:
             .build/speed-cycle/browser/
             .build/ui-idle/
             .build/theme-compositor/browser/
+            .build/theme-native/browser/
+            .build/library-accordion/
             .build/paper-playback/
           include-hidden-files: true
           retention-days: 14
@@ -306,6 +316,7 @@ jobs:
           script: |
             node tools/android-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}
             node tools/android-replay-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}-replay --fixture
+            node tools/android-theme-smoke.mjs emulator-5554 dist/listenly-ci-fixture.apk api-${{ matrix.api }}-theme
       - name: Save the APK and runtime evidence, including failed runs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -318,6 +329,7 @@ jobs:
             .build/ci/sdk-environment.log
             .build/runtime-results/api-${{ matrix.api }}/
             .build/runtime-results/api-${{ matrix.api }}-replay/
+            .build/runtime-results/api-${{ matrix.api }}-theme/
             .build/range-stream-tests/result.json
           include-hidden-files: true
           if-no-files-found: warn

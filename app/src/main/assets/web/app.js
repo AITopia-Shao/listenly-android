@@ -26,6 +26,8 @@ icons.shuffle='<path d="m18 3 3 3-3 3M3 6h2c5 0 9 12 14 12h2M18 15l3 3-3 3M3 18h
 let papers=[],currentAudioKey='',currentSentence=-1,importMode='intensive',quizResult=false,lastPlaybackTick=0,toastTimer,busy=false;
 let speedMenu=null;
 let libraryPaperId=null,libraryCollectionId=null,listeningAnchor=null;
+const expandedLibraryCollections=new Set(),expandedLibraryPapers=new Set(),libraryMotions=new Map();
+let libraryMotionFrame=0,libraryMotionTime=0;
 const openQuestions=new Set();
 function resetQuestionDisclosure(){openQuestions.clear();if(questions()[qIndex()])openQuestions.add(qIndex())}
 const libraryFilters={search:'',year:'',kind:'all'};
@@ -83,7 +85,7 @@ async function playAtHome(p,a,mark=false){
 }
 function markAtHome(p,a){prepareHomePlayback(p,a,true);state.selectedPaper=p;state.homeFocus={paper:p,article:a};persist();render();updatePlayer();if(!audio.paused)promotePlayingMaterial()}
 
-function previewPaper(p){if(!papers.some(paper=>paper.id===p))return;libraryPaperId=p;render();window.scrollTo(0,0)}
+function previewPaper(p){toggleLibraryPaper(p)}
 const selectionTimers=new WeakMap();
 function choosePaper(p){
   if(!papers.some(paper=>paper.id===p))return;state.selectedPaper=p;persist();
@@ -91,7 +93,7 @@ function choosePaper(p){
     const selected=row.dataset.paper===p,wasSelected=row.classList.contains('is-selected'),button=row.querySelector('[data-action="select-paper"]'),paper=papers.find(item=>item.id===row.dataset.paper);
     row.classList.toggle('is-selected',selected);button.setAttribute('aria-pressed',String(selected));button.setAttribute('aria-label',`${selected?'已选择':'选择'}套卷：${paper.title}`);
     if(wasSelected!==selected){clearTimeout(selectionTimers.get(row));row.classList.remove('selection-changing');if(selected&&!matchMedia('(prefers-reduced-motion: reduce)').matches){row.classList.add('selection-changing');selectionTimers.set(row,setTimeout(()=>{row.classList.remove('selection-changing');selectionTimers.delete(row)},260))}}
-  });syncGlass(app);syncFlowLenses(app);
+  });syncLibrarySelection();syncGlass(app);syncFlowLenses(app);
 }
 function promotePlayingMaterial(){
   const active=getArticle();if(!active||audio.paused||audio.error||audio.readyState<2||audio.getAttribute('src')!==sourceAudio())return;
@@ -105,8 +107,14 @@ function promotePlayingMaterial(){
   updateHomeSelection();syncGlass(app);syncFlowLenses(app);updatePlayer();
 }
 
-function updateHomeSelection(){document.querySelectorAll('.home-paper-row,.library-paper-row').forEach(row=>row.classList.toggle('is-selected',row.dataset.paper===state.homeFocus?.paper&&row.dataset.article===state.homeFocus?.article))}
-function libraryBack(){if(libraryPaperId)libraryPaperId=null;else libraryCollectionId=null;render();window.scrollTo(0,0)}
+function updateHomeSelection(){document.querySelectorAll('.home-paper-row,.library-paper-row').forEach(row=>row.classList.toggle('is-selected',row.dataset.paper===state.homeFocus?.paper&&row.dataset.article===state.homeFocus?.article));syncLibrarySelection()}
+function libraryBack(){
+  const buttons=[...app.querySelectorAll('.library-accordion [aria-expanded="true"]')].filter(button=>button.getClientRects().length&&!button.closest('[aria-hidden="true"]'));
+  const button=buttons.filter(button=>button.dataset.action==='open-paper').pop()||buttons.pop();
+  if(!button)return false;
+  if(button.dataset.action==='open-paper')toggleLibraryPaper(button.dataset.paper);else toggleLibraryCollection(button.dataset.collection);
+  return true;
+}
 function articlePosition(time){return time}
 function savePosition(){const pending=Number(audio.dataset.pendingTime),position=audio.dataset.pendingTime!==undefined&&Number.isFinite(pending)?pending:audio.currentTime;if(currentAudioKey&&Number.isFinite(position)){state.positions[currentAudioKey]=position;if(currentAudioKey===audioKey()&&audio.getAttribute('src')===sourceAudio()){const whole=articlePosition(position);if(Number.isFinite(whole))state.positions[JSON.stringify([paperId(),getArticle()?.id,'intensive','passage'])]=Math.max(0,whole-articleStart(getArticle()))}persist()}}
 function sourceAudio(){return paperAudio(getPaper())}
@@ -279,18 +287,64 @@ function practice(){
   return `<header class="practice-header"><button class="icon-btn" data-action="nav" data-route="home" aria-label="返回听力">${icon('back')}</button><div class="practice-title"><h1>${esc(materialTitle(article.title))}</h1></div><button class="icon-btn bookmark ${state.bookmarks.includes(materialKey())?'active':''}" data-action="bookmark" aria-pressed="${state.bookmarks.includes(materialKey())}" aria-label="${state.bookmarks.includes(materialKey())?'取消收藏':'收藏文章'}">${icon('bookmark')}</button></header><div class="practice-top">${modeControl()}${state.mode==='intensive'?`<div class="display-controls" data-current="${state.display}" role="group" aria-label="原文显示方式">${[['hidden','隐藏'],['original','原文'],['bilingual','双语']].map(([m,t])=>`<button class="${state.display===m?'active':''}" data-action="display" data-display="${m}" aria-pressed="${state.display===m}"><span data-lens-copy><span class="lens-copy-base">${t}</span><span class="lens-copy-emphasis" data-label="${t}" aria-hidden="true"></span></span></button>`).join('')}</div>`:''}</div><div class="workspace-grid"><div class="main-panel" data-reader-key="${esc(readerKey)}" data-reader-display="${state.mode==='intensive'?state.display:'exam'}" tabindex="0" aria-label="${state.mode==='intensive'?'文章正文':'题目'}">${state.mode==='intensive'?transcript():quizResult?result():quiz()}</div></div>${playback()}`;
 }
 function filteredArticles(paper){return paper.articles.filter(article=>(!libraryFilters.search||`${paper.title} ${materialTitle(article.title)} ${paper.year||''}`.toLowerCase().includes(libraryFilters.search.toLowerCase()))&&(libraryFilters.kind!=='saved'||state.bookmarks.includes(keyFor(paper.id,article.id))))}
-function filteredPapers(){return papers.filter(paper=>(!libraryFilters.year||String(paper.year)===libraryFilters.year)&&(libraryFilters.kind!=='real'||paper.kind==='cet6'||/^cet6[-_]/i.test(paper.id))&&(!libraryCollectionId||paperCollection(paper).id===libraryCollectionId)&&filteredArticles(paper).length)}
-function paperRow(paper){const selected=selectedPaper()?.id===paper.id;return `<div class="paper-group-row ${selected?'is-selected':''}" data-paper="${esc(paper.id)}" data-flow-item data-flow-key="${esc(paper.id)}"><button class="paper-group-select" data-action="select-paper" data-paper="${esc(paper.id)}" aria-label="${selected?'已选择':'选择'}套卷：${esc(paper.title)}" aria-pressed="${selected}"><span class="paper-group-copy" data-flow-copy><h3>${esc(paper.title)}</h3></span></button><button class="paper-group-open icon-btn" data-action="open-paper" data-paper="${esc(paper.id)}" aria-label="预览套卷：${esc(paper.title)}">${icon('chevron')}</button></div>`}
+function filteredPapers(collection){return papers.filter(paper=>(!libraryFilters.year||String(paper.year)===libraryFilters.year)&&(libraryFilters.kind!=='real'||paper.kind==='cet6'||/^cet6[-_]/i.test(paper.id))&&(!collection||paperCollection(paper).id===collection)&&filteredArticles(paper).length)}
+const libraryPanelId=(kind,id)=>`library-${kind}-${encodeURIComponent(id)}`;
+function libraryPanel(kind,id,content){const open=(kind==='collection'?expandedLibraryCollections:expandedLibraryPapers).has(id);return `<div class="library-collapse" id="${esc(libraryPanelId(kind,id))}" data-library-panel="${kind}" data-library-key="${esc(id)}" data-motion-state="${open?'open':'closed'}" aria-hidden="${!open}" ${open?'':'hidden inert'}><div class="library-collapse-content">${content}</div></div>`}
+function paperRow(paper){const selected=selectedPaper()?.id===paper.id,open=expandedLibraryPapers.has(paper.id);return `<div class="paper-group-row ${selected?'is-selected':''}" data-paper="${esc(paper.id)}" data-flow-item data-flow-key="${esc(paper.id)}"><button class="paper-group-select" data-action="select-paper" data-paper="${esc(paper.id)}" aria-label="${selected?'已选择':'选择'}套卷：${esc(paper.title)}" aria-pressed="${selected}"><span class="paper-group-copy" data-flow-copy><h3>${esc(paper.title)}</h3></span></button><button class="paper-group-open library-disclosure icon-btn" data-action="open-paper" data-paper="${esc(paper.id)}" aria-label="预览套卷：${esc(paper.title)}" aria-expanded="${open}" aria-controls="${esc(libraryPanelId('paper',paper.id))}">${icon('chevron')}</button></div>`}
+function libraryPaper(paper){const open=expandedLibraryPapers.has(paper.id);return `<div class="library-paper" data-library-paper="${esc(paper.id)}">${paperRow(paper)}${libraryPanel('paper',paper.id,`<div class="paper-list library-articles" data-library-loaded="${open}" data-flow-list="library-articles:${esc(paper.id)}">${open?filteredArticles(paper).map((article,index)=>materialRow(paper,article,index)).join(''):''}</div>`)}</div>`}
+function libraryCollections(){const collections=new Map([['cet6',{id:'cet6',title:'六级合集'}],['ielts',{id:'ielts',title:'雅思合集'}],['toefl',{id:'toefl',title:'托福合集'}]]);for(const paper of papers){const collection=paperCollection(paper);collections.set(collection.id,collection)}return [...collections.values()]}
+function libraryCollection(collection){const open=expandedLibraryCollections.has(collection.id);return `<section class="library-collection" data-library-collection="${esc(collection.id)}"><button class="collection-row library-disclosure" data-action="open-collection" data-collection="${esc(collection.id)}" data-flow-item data-flow-key="${esc(collection.id)}" data-selected="${paperCollection(selectedPaper()).id===collection.id}" aria-expanded="${open}" aria-controls="${esc(libraryPanelId('collection',collection.id))}"><span data-flow-copy><h2>${esc(collection.title)}</h2></span>${icon('chevron')}</button>${libraryPanel('collection',collection.id,`<div class="paper-list library-papers" data-library-loaded="${open}" data-library-papers="${esc(collection.id)}" data-flow-list="library:${esc(collection.id)}">${open?filteredPapers(collection.id).map(libraryPaper).join(''):''}</div>`)}</section>`}
 function libraryFiltersView(){return `<div class="library-filters"><input class="library-search" id="search" type="search" value="${esc(libraryFilters.search)}" placeholder="搜索材料" aria-label="搜索材料"><button class="library-filter" data-action="filter-menu" data-filter="year" aria-label="筛选年份" aria-haspopup="menu" aria-expanded="false"><span class="filter-value">${esc(libraryFilters.year||'全部年份')}</span>${icon('chevron')}</button><button class="library-filter" data-action="filter-menu" data-filter="kind" aria-label="筛选材料" aria-haspopup="menu" aria-expanded="false"><span class="filter-value">${esc(materialKinds.find(item=>item[0]===libraryFilters.kind)?.[1]||'全部材料')}</span>${icon('chevron')}</button></div>`}
 function library(){
-  const paper=papers.find(p=>p.id===libraryPaperId);
-  if(paper)return `<header class="topbar"><button class="icon-btn library-back" data-action="library-back" aria-label="返回套卷目录">${icon('back')}</button><h1 class="library-heading">${esc(paper.title)}</h1></header><div id="library-list" class="paper-list" data-flow-list="library-articles:${esc(paper.id)}">${filteredArticles(paper).map((article,index)=>materialRow(paper,article,index)).join('')||'<div class="empty">暂无匹配材料</div>'}</div>`;
-  const collections=new Map([['cet6',{id:'cet6',title:'六级合集'}],['ielts',{id:'ielts',title:'雅思合集'}],['toefl',{id:'toefl',title:'托福合集'}]]);
-  for(const item of papers){const collection=paperCollection(item);collections.set(collection.id,collection)}
-  if(!libraryCollectionId)return `<div id="library-list" class="paper-list collection-list" data-flow-list="collections">${[...collections.values()].map(collection=>`<button class="collection-row" data-action="open-collection" data-collection="${esc(collection.id)}" data-flow-item data-flow-key="${esc(collection.id)}" data-selected="${paperCollection(selectedPaper()).id===collection.id}"><span data-flow-copy><h2>${esc(collection.title)}</h2></span>${icon('chevron')}</button>`).join('')}</div>`;
-  const collection=collections.get(libraryCollectionId),visible=filteredPapers();
-  return `<header class="topbar"><button class="icon-btn library-back" data-action="library-back" aria-label="返回考试合集">${icon('back')}</button><h1 class="library-heading">${esc(collection?.title||'考试合集')}</h1></header>${libraryFiltersView()}<div id="library-list" class="paper-list" data-flow-list="library">${visible.map(paperRow).join('')||'<div class="empty">暂无套卷</div>'}</div>`;
+  return `${libraryFiltersView()}<div id="library-list" class="paper-list collection-list library-accordion" data-flow-list="collections">${libraryCollections().map(libraryCollection).join('')}</div>`;
 }
+function syncLibrarySelection(){
+  const selected=selectedPaper(),collection=paperCollection(selected).id;
+  app.querySelectorAll('.collection-row').forEach(row=>{const value=String(row.dataset.collection===collection);if(row.dataset.selected!==value)row.dataset.selected=value});
+  app.querySelectorAll('.paper-group-row').forEach(row=>{const active=row.dataset.paper===selected?.id,button=row.querySelector('[data-action="select-paper"]');row.classList.toggle('is-selected',active);if(button&&button.getAttribute('aria-pressed')!==String(active)){button.setAttribute('aria-pressed',String(active));const paper=papers.find(paper=>paper.id===row.dataset.paper);button.setAttribute('aria-label',`${active?'已选择':'选择'}套卷：${paper?.title||row.dataset.paper}`)}});
+}
+function libraryButton(action,key){return [...app.querySelectorAll(`[data-action="${action}"]`)].find(button=>(action==='open-paper'?button.dataset.paper:button.dataset.collection)===key)}
+function reconcileLibraryRows(list,items,attribute,markup){
+  const existing=new Map([...list.children].filter(node=>node.hasAttribute(attribute)).map(node=>[node.getAttribute(attribute),node])),wanted=new Set(items.map(item=>item.id));
+  existing.forEach((node,key)=>{if(!wanted.has(key))node.remove()});
+  let previous=null;
+  for(const item of items){let node=existing.get(item.id);if(!node){const holder=document.createElement('div');holder.innerHTML=markup(item);node=holder.firstElementChild}const expected=previous?previous.nextElementSibling:[...list.children].find(child=>child.hasAttribute(attribute));if(expected!==node)list.insertBefore(node,expected||null);previous=node}
+  list.querySelectorAll(':scope > .library-empty').forEach(node=>node.remove());
+  if(!items.length){const empty=document.createElement('div');empty.className='empty library-empty';empty.textContent='暂无匹配材料';list.appendChild(empty)}
+}
+function fillLibraryPanel(button){
+  const panel=document.getElementById(button.getAttribute('aria-controls'));if(!panel)return null;
+  if(button.dataset.action==='open-collection'){const list=panel.querySelector('[data-library-papers]');list.dataset.libraryLoaded='true';reconcileLibraryRows(list,filteredPapers(button.dataset.collection),'data-library-paper',libraryPaper)}
+  else{const paper=papers.find(paper=>paper.id===button.dataset.paper);if(paper){const list=panel.querySelector('.library-articles');list.dataset.libraryLoaded='true';reconcileLibraryRows(list,filteredArticles(paper),'data-article',article=>materialRow(paper,article))}}
+  syncGlass(panel);syncFlowLenses(panel);return panel;
+}
+const libraryTabStops=new WeakMap();
+function libraryPanelInput(panel,open){
+  panel.setAttribute('aria-hidden',String(!open));
+  if(open){panel.removeAttribute('inert');libraryTabStops.get(panel)?.forEach((value,element)=>{if(value===null)element.removeAttribute('tabindex');else element.setAttribute('tabindex',value)});libraryTabStops.delete(panel)}
+  else{panel.setAttribute('inert','');const stops=new Map();panel.querySelectorAll('button,input,a,[tabindex]').forEach(element=>{stops.set(element,element.getAttribute('tabindex'));element.tabIndex=-1});libraryTabStops.set(panel,stops)}
+}
+function animateLibraryPanel(button,panel,open){
+  let motion=libraryMotions.get(panel);if(!motion)motion={panel,button,height:panel.hidden?0:panel.getBoundingClientRect().height,velocity:0,angle:panel.hidden?0:90,angleVelocity:0};
+  motion.open=open;motion.button=button;panel.style.height=`${Math.max(0,motion.height)}px`;button.style.setProperty('--library-disclosure-angle',`${motion.angle}deg`);panel.hidden=false;panel.dataset.motionState=open?'opening':'closing';libraryPanelInput(panel,open);button.setAttribute('aria-expanded',String(open));
+  if(!open&&panel.contains(document.activeElement))button.focus({preventScroll:true});
+  libraryMotions.set(panel,motion);
+  if(!libraryMotionFrame){libraryMotionTime=0;libraryMotionFrame=requestAnimationFrame(stepLibraryPanels)}
+}
+function stepLibraryPanels(now){
+  libraryMotionFrame=0;const elapsed=Math.min(.05,Math.max(.001,(now-(libraryMotionTime||now-16.667))/1000));libraryMotionTime=now;
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Read every active content box before writing any animated height. Nested
+  // folds can follow a changing child without alternating reads and writes.
+  const motions=[...libraryMotions.values()].filter(motion=>{if(motion.panel.isConnected)return true;libraryMotions.delete(motion.panel);return false}).map(motion=>({motion,target:motion.open?motion.panel.firstElementChild.offsetHeight:0}));
+  for(const {motion,target} of motions){const angle=motion.open?90:0;if(reduced){motion.height=target;motion.angle=angle;motion.velocity=motion.angleVelocity=0}else{let remaining=elapsed;while(remaining>0){const dt=Math.min(remaining,1/120);remaining-=dt;motion.velocity+=((target-motion.height)*430-motion.velocity*38)*dt;motion.height+=motion.velocity*dt;motion.angleVelocity+=((angle-motion.angle)*520-motion.angleVelocity*32)*dt;motion.angle+=motion.angleVelocity*dt}}
+    motion.panel.style.height=`${Math.max(0,motion.height)}px`;motion.button.style.setProperty('--library-disclosure-angle',`${motion.angle}deg`);
+    if(Math.abs(target-motion.height)<.2&&Math.abs(motion.velocity)<2&&Math.abs(angle-motion.angle)<.1&&Math.abs(motion.angleVelocity)<1){motion.panel.style.height=motion.open?'auto':'0px';motion.panel.hidden=!motion.open;motion.panel.dataset.motionState=motion.open?'open':'closed';motion.button.style.setProperty('--library-disclosure-angle',`${angle}deg`);libraryMotions.delete(motion.panel);syncFlowLenses(motion.panel)}
+  }
+  if(libraryMotions.size)libraryMotionFrame=requestAnimationFrame(stepLibraryPanels);else libraryMotionTime=0;
+}
+function toggleLibraryCollection(id){const button=libraryButton('open-collection',id);if(!button)return;const open=!expandedLibraryCollections.has(id);if(open)expandedLibraryCollections.add(id);else expandedLibraryCollections.delete(id);libraryCollectionId=open?id:null;const panel=open?fillLibraryPanel(button):document.getElementById(button.getAttribute('aria-controls'));if(panel)animateLibraryPanel(button,panel,open)}
+function toggleLibraryPaper(id){const button=libraryButton('open-paper',id);if(!button)return;const open=!expandedLibraryPapers.has(id);if(open)expandedLibraryPapers.add(id);else expandedLibraryPapers.delete(id);libraryPaperId=open?id:null;const panel=open?fillLibraryPanel(button):document.getElementById(button.getAttribute('aria-controls'));if(panel)animateLibraryPanel(button,panel,open)}
 function activityView(){
   const calendar=activityCalendar(state);
   const days=calendar.weeks.flat().map(day=>`<span class="calendar-day" role="img" data-date="${day.date}" data-level="${day.level}" data-count="${day.count}" ${day.inRange?'':'data-outside="true" aria-hidden="true"'} ${day.isToday?'aria-current="date"':''} title="${day.date} · ${day.count} 题" aria-label="${day.date}，完成 ${day.count} 题"></span>`).join('');
@@ -298,7 +352,7 @@ function activityView(){
 }
 function profile(){
   const stats=activitySummary(state);
-  const recent=Object.entries(state.articleCompletions).sort((a,b)=>b[1].last-a[1].last).map(([key])=>{let p,a;try{[p,a]=JSON.parse(key)}catch{return ''}const article=papers.find(paper=>paper.id===p)?.articles.find(art=>art.id===a);return article?`<button class="history-row" data-action="open" data-paper="${esc(p)}" data-article="${esc(a)}"><span class="history-title">${esc(materialTitle(article.title))}</span></button>`:''}).filter(Boolean).slice(0,4).join('');
+  const recent=Object.entries(state.articleCompletions).sort((a,b)=>b[1].last-a[1].last).map(([key])=>{let p,a;try{[p,a]=JSON.parse(key)}catch{return ''}const paper=papers.find(paper=>paper.id===p),article=paper?.articles.find(art=>art.id===a);return article?`<button class="history-row" data-action="open" data-paper="${esc(p)}" data-article="${esc(a)}"><span class="history-copy"><span class="history-title">${esc(paper.title)}</span><span class="history-material">${esc(materialTitle(article.title))}</span></span></button>`:''}).filter(Boolean).slice(0,4).join('');
   return `${topbar()}<div class="statistics"><div class="stat"><strong data-stat="today-listening-minutes">${stats.listeningMinutes}</strong><span>今日听力 · 分钟</span></div><div class="stat"><strong data-stat="today-articles">${stats.completedArticles}</strong><span>今日完成 · 篇</span></div><div class="stat"><strong data-stat="total-study-hours">${stats.studyHours.toFixed(1)}</strong><span>总学习时长 · 小时</span></div></div>${activityView()}<div class="settings-grid"><section class="settings-card records-card"><div class="setting-row"><span>学习记录</span><button class="text-btn" data-action="export">导出 ${icon('download')}</button></div></section><section class="settings-card"><h2>最近练习</h2>${recent||'<p>暂无记录</p>'}</section></div>`;
 }
 let studyTickAt=performance.now(),questionStudyActive=false,profileDay=today();
@@ -404,7 +458,7 @@ app.addEventListener('click',async event=>{const button=event.target.closest('[d
   case 'open':selectMaterial(button.dataset.paper,button.dataset.article);break;
   case 'home-play':case 'material-play':await playAtHome(button.dataset.paper,button.dataset.article,button.dataset.marker==='true');break;
   case 'mark-paper':markAtHome(button.dataset.paper,button.dataset.article);break;
-  case 'open-collection':libraryCollectionId=button.dataset.collection;libraryPaperId=null;render();break;
+  case 'open-collection':toggleLibraryCollection(button.dataset.collection);break;
   case 'select-paper':choosePaper(button.dataset.paper);break;
   case 'open-paper':previewPaper(button.dataset.paper);break;
   case 'library-back':libraryBack();break;
@@ -446,7 +500,12 @@ document.addEventListener('keydown',event=>{
 });
 window.addEventListener('resize',()=>closeSpeedMenu(false));
 window.addEventListener('scroll',event=>{if(speedMenu&&(!(event.target instanceof Node)||!speedMenu.shade.contains(event.target)))closeSpeedMenu(false)},true);
-function filterLibrary(){if(state.route!=='library')return;const paper=papers.find(p=>p.id===libraryPaperId),visible=paper?filteredArticles(paper):filteredPapers();document.querySelector('#library-list').innerHTML=(paper?visible.map((article,index)=>materialRow(paper,article,index)):visible.map(paperRow)).join('')||'<div class="empty">暂无匹配材料</div>';const count=document.querySelector('.library-stats');if(count)count.remove();syncGlass(app);syncFlowLenses(app)}
+function filterLibrary(){
+  if(state.route!=='library')return;
+  app.querySelectorAll('.library-papers[data-library-loaded="true"]').forEach(list=>reconcileLibraryRows(list,filteredPapers(list.dataset.libraryPapers),'data-library-paper',libraryPaper));
+  app.querySelectorAll('.library-articles[data-library-loaded="true"]').forEach(list=>{const panel=list.closest('[data-library-panel="paper"]'),paper=papers.find(paper=>paper.id===panel.dataset.libraryKey);if(paper)reconcileLibraryRows(list,filteredArticles(paper),'data-article',article=>materialRow(paper,article))});
+  syncGlass(app);syncFlowLenses(app);
+}
 
 audio.addEventListener('loadedmetadata',()=>{if(audio.dataset.pendingTime!==undefined){const requested=Number(audio.dataset.pendingTime),target=audio.dataset.pendingSeek==='true'?Math.max(0,Math.min(audio.duration,Number.isFinite(requested)?requested:0)):playablePosition(requested,audio.duration);if(Math.abs(audio.currentTime-target)>.05)audio.currentTime=target;delete audio.dataset.pendingTime;delete audio.dataset.pendingSeek}const error=document.querySelector('#audio-error');if(error)error.hidden=true;updatePlayer()});
 audio.addEventListener('play',()=>{settleStudyClock();lastPlaybackTick=performance.now();resetListeningAnchor();updatePlayer()});
@@ -475,7 +534,7 @@ async function advancePlayback(){
 audio.addEventListener('ended',()=>{settleListeningCoverage(true);savePosition();updatePlayer();advancePlayback().catch(()=>toast('播放失败，点播放重试'))});
 audio.addEventListener('error',()=>{const el=document.querySelector('#audio-error');if(el){el.hidden=false;el.textContent='播放失败，点播放重试'}updatePlayer()});
 window.addEventListener('pagehide',()=>{settleListeningCoverage(true);settleStudyClock();savePosition()});document.addEventListener('visibilitychange',()=>{settleStudyClock();if(document.hidden){settleListeningCoverage();savePosition()}});setInterval(()=>{settleStudyClock();if(state.route==='profile'){if(profileDay!==today())render();else refreshProfileStats()}},1000);setInterval(()=>{if(!audio.paused||questionStudyActive)persist()},5000);
-window.listenlyBack=()=>{if(speedMenu){closeSpeedMenu();return true}if(document.querySelector('.dialog-shade:not(.is-closing)')){closeDialog();return true}if(state.route==='library'&&(libraryPaperId||libraryCollectionId)){libraryBack();return true}if(state.route!=='home'){nav('home');return true}return false};
+window.listenlyBack=()=>{if(speedMenu){closeSpeedMenu();return true}if(document.querySelector('.dialog-shade:not(.is-closing)')){closeDialog();return true}if(state.route==='library'&&libraryBack())return true;if(state.route!=='home'){nav('home');return true}return false};
 
 async function init(){try{const response=await fetch('demo.json');if(!response.ok)throw new Error('demo missing');const demo=await response.json();papers=[demo];const bundled=await fetch('bundled-library.json').catch(()=>null);if(bundled?.ok){const data=await bundled.json();papers=mergePapers(data.papers||[],papers).papers}
   if(window.Android?.getImports){let manifests=[];try{manifests=JSON.parse(window.Android.getImports())}catch{}for(const manifest of orderedImports(manifests))await processImport(manifest,true)}else{try{for(const item of await readImports())await processImport(await mapBrowserImport(item),true)}catch(error){console.warn('Local files unavailable',error)}}

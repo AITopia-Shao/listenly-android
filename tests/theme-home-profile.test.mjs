@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
-import {enterLibraryPaper,openLibraryArticle,clickAppControl} from './library-navigation.mjs';
+import {enterLibraryPaper,openLibraryArticle,collapseLibraryPaper,clickAppControl} from './library-navigation.mjs';
 import {playbackRates,nextRate,assertSpeed,cycleSpeedTo} from './playback-speed.mjs';
 
 // Exercise the rendered app with genuine pointer gestures and decoded audio.
@@ -80,7 +80,7 @@ async function importSelectionFixture(){
   await writeFile(path.join(directory,'questions.json'),JSON.stringify([{id:'q1',number:id==='first'?1:5,prompt:'Choose the first option.',options:['A','B','C','D'].map(id=>({id,text:`Option ${id}`})),answer:'A'}]));
  }
  await page.locator('#folder-input').setInputFiles(path.dirname(folder));
- await enterLibraryPaper(page,'experience-selection');await click('[data-action="library-back"]');
+ await enterLibraryPaper(page,'experience-selection');await collapseLibraryPaper(page,'experience-selection');
  if(await page.locator('[data-action="close-dialog"]').count())await click('[data-action="close-dialog"]');
 }
 try{
@@ -260,7 +260,8 @@ try{
  }
  pass('the current-day calendar cell and outline remain completely visible on all three phone widths');
  await page.setViewportSize({width:393,height:873});await click('[data-action="nav"][data-route="library"]');await importSelectionFixture();
- assert.equal(await page.locator('#library-list [data-action="open"]').count(),0,'library root displays paper directories instead of individual articles');
+ assert.ok(await page.locator('#library-list > .library-collection').count()>=4,'library retains collection headers above its nested paper directories');
+ assert.equal(await page.locator('[data-library-paper="experience-selection"] [data-action="open"]:visible').count(),0,'the collapsed imported suite keeps its articles hidden while other expanded suites retain their state');
  assert.ok(await page.locator('.paper-group-row').count()>=2,'original and imported papers each have one first-level directory');
  assert.equal(await page.locator('select').count(),0,'library filters use the app menu instead of native select controls');
  const materialFilter=page.locator('[data-action="filter-menu"][data-filter="kind"]');
@@ -287,31 +288,31 @@ try{
  assert.equal(await page.locator('.paper-group-row').count(),1,'year selection filters paper directories');
  assert.equal(await page.locator('[data-action="open-paper"][data-paper="experience-selection"]').count(),1,'year selection retains the matching imported paper');
  const selectedControl=page.locator('[data-action="select-paper"][data-paper="experience-selection"]');
- await selectedControl.evaluate(button=>{window.__selectionControl=button;window.__selectionRow=button.closest('.paper-group-row');window.__selectionLens=document.querySelector('[data-flow-list="library"] .flow-lens');window.__selectionMotion=[];window.__selectionSampling=true;const sample=()=>{if(!window.__selectionSampling)return;const lens=document.querySelector('[data-flow-list="library"] .flow-lens'),r=lens?.getBoundingClientRect();if(r)window.__selectionMotion.push({time:performance.now(),left:r.left,top:r.top,width:r.width,height:r.height});requestAnimationFrame(sample)};sample()});
+ await selectedControl.evaluate(button=>{window.__selectionControl=button;window.__selectionRow=button.closest('.paper-group-row');window.__selectionLens=document.querySelector('[data-flow-list="library:original"] > .flow-lens');window.__selectionMotion=[];window.__selectionSampling=true;const sample=()=>{if(!window.__selectionSampling)return;const lens=document.querySelector('[data-flow-list="library:original"] > .flow-lens'),r=lens?.getBoundingClientRect();if(r)window.__selectionMotion.push({time:performance.now(),left:r.left,top:r.top,width:r.width,height:r.height});requestAnimationFrame(sample)};sample()});
  await selectedControl.click();assert.equal(await selectedControl.getAttribute('aria-pressed'),'true','the suite title selects the paper immediately');
- assert.ok(await selectedControl.evaluate(button=>window.__selectionControl===button&&window.__selectionRow===button.closest('.paper-group-row')&&window.__selectionLens===document.querySelector('[data-flow-list="library"] .flow-lens')),'selecting a suite preserves the row, title control and shared moving lens');
+ assert.ok(await selectedControl.evaluate(button=>window.__selectionControl===button&&window.__selectionRow===button.closest('.paper-group-row')&&window.__selectionLens===document.querySelector('[data-flow-list="library:original"] > .flow-lens')),'selecting a suite preserves the row, title control and shared moving lens');
  assert.equal(await page.locator('.selection-indicator,.paper-select svg rect').count(),0,'selection is expressed by the moving lens without a duplicate checkbox');
  const selectedStyle=await selectedControl.evaluate(b=>({background:getComputedStyle(b).backgroundColor,outline:getComputedStyle(b).outlineStyle,shadow:getComputedStyle(b).boxShadow}));
  assert.equal(selectedStyle.outline,'none','pointer selection adds no outer focus rectangle');
- await page.waitForFunction(()=>{const row=document.querySelector('.paper-group-row.is-selected'),lens=document.querySelector('[data-flow-list="library"] .flow-lens');if(!row||!lens)return false;const a=row.getBoundingClientRect(),b=lens.getBoundingClientRect();return Math.abs((a.top+a.bottom-b.top-b.bottom)/2)<1&&Number(getComputedStyle(lens).opacity)>.98});
+ await page.waitForFunction(()=>{const row=document.querySelector('.paper-group-row.is-selected'),lens=document.querySelector('[data-flow-list="library:original"] > .flow-lens');if(!row||!lens)return false;const a=row.getBoundingClientRect(),b=lens.getBoundingClientRect();return Math.abs((a.top+a.bottom-b.top-b.bottom)/2)<1&&Number(getComputedStyle(lens).opacity)>.98});
  const selectionMotion=await selectedControl.evaluate(()=>{window.__selectionSampling=false;return window.__selectionMotion});
- const nightGlass=await page.locator('[data-flow-list="library"] .flow-lens').evaluate(e=>({opacity:Number(getComputedStyle(e).opacity),image:getComputedStyle(e).backgroundImage,filter:getComputedStyle(e).backdropFilter||getComputedStyle(e).webkitBackdropFilter}));
+ const nightGlass=await page.locator('[data-flow-list="library:original"] > .flow-lens').evaluate(e=>({opacity:Number(getComputedStyle(e).opacity),image:getComputedStyle(e).backgroundImage,filter:getComputedStyle(e).backdropFilter||getComputedStyle(e).webkitBackdropFilter}));
  assert.match(nightGlass.filter,/url\(/,'selected paper uses actual optical refraction');assert.match(nightGlass.image,/gradient/,'selected suite retains the glass material highlight');
  const selectedTitle=page.locator('.paper-group-row.is-selected .paper-group-copy h3');
  const nightSelection=rgb(await selectedTitle.evaluate(e=>getComputedStyle(e).color));assert.ok(nightSelection[0]>nightSelection[1]&&nightSelection[1]>nightSelection[2],'night mode identifies the selected suite with orange');
- await setTheme('light','library');await enterLibraryPaper(page,'experience-selection');await click('[data-action="library-back"]');
- await page.waitForFunction(()=>document.querySelector('[data-flow-list="library"] .flow-lens')&&Number(getComputedStyle(document.querySelector('[data-flow-list="library"] .flow-lens')).opacity)>.98);
- const daySelection=await page.locator('[data-flow-list="library"] .flow-lens').evaluate(e=>({image:getComputedStyle(e).backgroundImage,filter:getComputedStyle(e).backdropFilter||getComputedStyle(e).webkitBackdropFilter}));assert.match(daySelection.filter,/url\(/,'day mode retains the selected suite refraction layer');
+ await setTheme('light','library');await enterLibraryPaper(page,'experience-selection');await collapseLibraryPaper(page,'experience-selection');
+ await page.waitForFunction(()=>document.querySelector('[data-flow-list="library:original"] > .flow-lens')&&Number(getComputedStyle(document.querySelector('[data-flow-list="library:original"] > .flow-lens')).opacity)>.98);
+ const daySelection=await page.locator('[data-flow-list="library:original"] > .flow-lens').evaluate(e=>({image:getComputedStyle(e).backgroundImage,filter:getComputedStyle(e).backdropFilter||getComputedStyle(e).webkitBackdropFilter}));assert.match(daySelection.filter,/url\(/,'day mode retains the selected suite refraction layer');
  await page.screenshot({path:path.join(output,'library-papers-light.png'),fullPage:true});
- await setTheme('dark','library');await enterLibraryPaper(page,'experience-selection');await click('[data-action="library-back"]');
+ await setTheme('dark','library');await enterLibraryPaper(page,'experience-selection');await collapseLibraryPaper(page,'experience-selection');
  await page.waitForTimeout(180);await page.screenshot({path:path.join(output,'library-papers-dark.png'),fullPage:true});
  await filter.click();await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value=""]');
  assert.equal(await page.locator('.paper-group-row.is-selected').count(),1,'one suite is selected at a time');
  assert.equal(await page.locator('[data-action="select-paper"][data-paper="listenly-original"]').getAttribute('aria-pressed'),'false','choosing another suite removes the previous selection');
  await filter.click();await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value="2001"]');
  await enterLibraryPaper(page,'experience-selection');
- assert.deepEqual(await page.locator('#library-list .paper-copy h3').allTextContents(),['第1篇','第2篇'],'material choices omit their question-range title suffixes');
- await click('[data-action="library-back"]');assert.equal(await page.locator('.paper-group-row').count(),1,'detail back returns to the retained paper filter');
+ assert.deepEqual(await page.locator('[data-library-paper="experience-selection"] .paper-copy h3').allTextContents(),['第1篇','第2篇'],'material choices omit their question-range title suffixes');
+ await collapseLibraryPaper(page,'experience-selection');assert.equal(await page.locator('.paper-group-row').count(),1,'detail back returns to the retained paper filter');
  await click('[data-action="nav"][data-route="home"]');
  assert.ok((await page.locator('[data-action="home-play"]').evaluateAll(buttons=>buttons.map(b=>b.dataset.paper))).every(id=>id==='experience-selection'),'the selected paper supplies all home materials');
  assert.equal((await saved()).selectedPaper,'experience-selection','paper selection is saved');
@@ -339,7 +340,7 @@ try{
  assert.equal(await page.locator('.history-row').count(),1,'completing only audio does not create a recent completed quiz');
  assert.doesNotMatch(await page.locator('.history-row').innerText(),/[1-8]\s*[–-]\s*[1-8]\s*题|分钟/);
  pass('paper selection, custom filters, clean titles and full-play listening credit follow completed user actions',{selectedStyle,selectionMotion,creditedListeningSeconds:fullListening.completedListeningDays[dateKeys.today]});
- await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'experience-selection');await click('[data-action="library-back"]');
+ await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'experience-selection');await collapseLibraryPaper(page,'experience-selection');
  await click('[data-action="filter-menu"][data-filter="year"]');await click('.filter-popover [data-action="set-filter"][data-filter="year"][data-value=""]');await click('[data-action="select-paper"][data-paper="experience-selection"]');
  const beforePreview=await saved();
  const homeBeforePreview={paper:await page.locator('[data-action="select-paper"][aria-pressed="true"]').getAttribute('data-paper'),focus:beforePreview.homeFocus,visibleArticle:beforePreview.homeFocus?.paper==='experience-selection'?beforePreview.homeFocus.article:'first'};
@@ -366,7 +367,7 @@ try{
  assert.deepEqual((await saved()).homeFocus,{paper:'listenly-original',article:'morning'},'actual playback records the article for the home focus');
  await libraryPlay.click();await page.waitForFunction(()=>document.querySelector('#audio').paused);
  await click('[data-action="nav"][data-route="home"]');assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),'listenly-original');assert.equal(await page.locator('.focus-play').getAttribute('data-article'),'morning');
- await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'experience-selection');await click('[data-action="library-back"]');await click('[data-action="select-paper"][data-paper="experience-selection"]');await click('[data-action="nav"][data-route="home"]');
+ await click('[data-action="nav"][data-route="library"]');await enterLibraryPaper(page,'experience-selection');await collapseLibraryPaper(page,'experience-selection');await click('[data-action="select-paper"][data-paper="experience-selection"]');await click('[data-action="nav"][data-route="home"]');
  assert.equal(await page.locator('.focus-play').getAttribute('data-paper'),'experience-selection','the explicit right-hand paper selector changes the home collection without playback');
  assert.equal((await audioState()).paused,true,'explicit paper selection does not start audio');
  await click('.home-playback [data-action="seek-relative"][data-seconds="5"]');await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1&&!document.querySelector('#audio').seeking);const selectionBeforeFailure=await saved();

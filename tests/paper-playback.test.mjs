@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {chromium} from 'playwright';
 import {startPreview} from '../tools/preview.mjs';
-import {clickAppControl,enterLibraryPaper} from './library-navigation.mjs';
+import {clickAppControl,enterLibraryPaper,expandLibraryCollection,collapseLibraryPaper} from './library-navigation.mjs';
 
 const args=process.argv.slice(2),option=name=>{const i=args.indexOf(name);return i<0?null:args[i+1]};
 const webRoot=path.resolve(option('--web-root')||'.build/demo/main/assets/web');
@@ -55,7 +55,7 @@ try{
 
  await click('[data-action="nav"][data-route="library"]');for(const id of ['cet6','ielts','toefl','original'])assert.equal(await page.locator(`[data-action="open-collection"][data-collection="${id}"]`).count(),1);
  assert.equal(await page.locator('[data-action="theme"],[data-action="import"]').count(),0);
- const selected=(await saved()).selectedPaper;await click('[data-action="open-collection"][data-collection="original"]');await click(`[data-action="open-paper"][data-paper="${demo.id}"]`);assert.equal((await saved()).selectedPaper,selected);await click('[data-action="library-back"]');await click('[data-action="library-back"]');assert.ok(await page.locator('.collection-row').count());
+ const selected=(await saved()).selectedPaper;await enterLibraryPaper(page,demo.id);assert.equal((await saved()).selectedPaper,selected);await collapseLibraryPaper(page,demo.id);await click('[data-action="open-collection"][data-collection="original"]');assert.equal(await page.locator('[data-action="open-collection"][data-collection="original"]').getAttribute('aria-expanded'),'false');assert.ok(await page.locator('.collection-row').count());
  pass('library has collection, paper and chapter levels, and previewing never selects a paper');
 
  await page.evaluate(()=>{let n=0;Object.defineProperty(crypto,'randomUUID',{configurable:true,value:()=>++n===1?'ffffffff-ffff-4fff-8fff-ffffffffffff':'00000000-0000-4000-8000-000000000000'})});
@@ -63,7 +63,7 @@ try{
  const imported={...demo,id:'ielts-one',title:'雅思 · 完整录音测试',collection:{id:'ielts',title:'雅思合集'},audio:'paper.wav',articles:demo.articles.map(a=>{const {audio,...chapter}=a;return chapter})};
  await writeFile(path.join(folder,'paper.json'),JSON.stringify(imported));await page.locator('#folder-input').setInputFiles(folder);await page.waitForFunction(()=>JSON.parse(localStorage.getItem('listenly.state.v1')).lastImport?.count===1);
  if(await page.locator('.dialog-shade:not(.is-closing)').count())await click('[data-action="close-dialog"]');
- assert.equal((await saved()).selectedPaper,selected);await click('[data-action="open-collection"][data-collection="ielts"]');await page.locator('[data-action="select-paper"][data-paper="ielts-one"]').waitFor();await click('[data-action="open-paper"][data-paper="ielts-one"]');assert.equal((await saved()).selectedPaper,selected);await click('[data-action="library-back"]');await click('[data-action="select-paper"][data-paper="ielts-one"]');await home();assert.equal(await page.locator('.focus-card h2').innerText(),imported.title);
+ assert.equal((await saved()).selectedPaper,selected);await expandLibraryCollection(page,'ielts');await page.locator('[data-action="select-paper"][data-paper="ielts-one"]').waitFor();await enterLibraryPaper(page,'ielts-one');assert.equal((await saved()).selectedPaper,selected);await collapseLibraryPaper(page,'ielts-one');await click('[data-action="select-paper"][data-paper="ielts-one"]');await home();assert.equal(await page.locator('.focus-card h2').innerText(),imported.title);
  await click('.focus-play');await ready();assert.ok((await media()).src.startsWith('blob:'));await click('.focus-play');
  pass('a single-recording folder imports with authored markers, enters its exam collection and changes home only when selected or played');
 

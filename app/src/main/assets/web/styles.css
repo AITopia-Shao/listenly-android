@@ -518,5 +518,29 @@ body.is-practicing,.app-shell.practice-shell,.transcript-card,.quiz-card,.result
 .collection-row{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:78px;padding:14px 12px;border-bottom:1px solid var(--divider);background:transparent;text-align:left;color:var(--ink)}
 .collection-row h2{font-size:19px;font-weight:inherit;margin:0}
 .collection-row>svg{width:16px;height:16px;color:var(--muted)}
+.library-accordion{margin-top:4px;overflow-anchor:none}
+.library-collection,.library-paper{min-width:0}
+.library-accordion .collection-row{min-height:66px;padding:12px 10px}
+.library-accordion .collection-row h2{font-size:17px;line-height:1.5}
+.library-accordion .paper-group-row{min-height:64px;padding:6px 6px}
+.library-accordion .paper-group-select{min-height:50px;padding:0 6px}
+.library-accordion .paper-group-copy h3{font-size:14px;line-height:1.5}
+.library-accordion .paper-row{min-height:62px;padding:8px 8px}
+.library-accordion .paper-copy h3{font-size:13px;line-height:1.5}
+.library-accordion .paper-copy p{margin-top:2px}
+.library-accordion .library-disclosure>svg{flex-shrink:0;transform:rotate(var(--library-disclosure-angle,0deg));transform-origin:center;will-change:transform}
+.library-accordion .library-disclosure[aria-expanded=true]>svg{transform:rotate(var(--library-disclosure-angle,90deg))}
+.library-collapse{min-width:0;height:auto;overflow:hidden}
+.library-collapse[hidden]{display:none}
+.library-collapse[aria-hidden=true]{pointer-events:none}
+.library-collapse[data-motion-state=open]{overflow:visible}
+.library-collapse-content{display:flex;flex-direction:column;min-width:0;min-height:0;padding-left:12px}
+.library-papers,.library-articles{margin-top:0;min-width:0}
+.library-articles{padding-left:3px}
+.library-accordion .library-empty{min-height:60px;padding:16px 10px;font-size:12px;text-align:left}
+.history-row{min-height:64px;padding:11px 0}
+.history-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.history-copy .history-title{display:block;font-size:12px;line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+.history-material{display:block;font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
 .row-reader.icon-btn{width:32px;min-width:32px;height:44px;padding:0;background:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
 .row-reader svg{width:12px;height:12px}

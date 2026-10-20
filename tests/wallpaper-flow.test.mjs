@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {startPreview} from '../tools/preview.mjs';
-import {clickAppControl,enterLibraryPaper} from './library-navigation.mjs';
+import {clickAppControl,enterLibraryPaper,expandLibraryCollection,collapseLibraryPaper} from './library-navigation.mjs';
 import {installThemeAppearanceReader} from './theme-appearance.mjs';
 
 // Check painted pixels and geometry after genuine gestures. An accepted CSS
@@ -56,9 +56,9 @@ async function setTheme(theme){await click('[data-action="nav"][data-route="prof
 async function startProbe(list){
  await page.evaluate(list=>{
   const read=()=>{
-   const container=document.querySelector(list),lens=container?.querySelector('.flow-lens');if(!lens)return null;
+   const container=document.querySelector(list),lens=container?.querySelector(':scope > .flow-lens');if(!lens)return null;
    const box=lens.getBoundingClientRect(),parent=container.getBoundingClientRect(),css=getComputedStyle(lens);
-   const items=[...container.querySelectorAll('[data-flow-item]')].map(item=>{
+   const items=[...container.querySelectorAll('[data-flow-item]')].filter(item=>item.closest('[data-flow-list]')===container).map(item=>{
     const r=item.getBoundingClientRect(),copy=item.querySelector('[data-flow-copy]')||item,s=getComputedStyle(copy.querySelector('h3,.en')||copy),c=copy.getBoundingClientRect();
     return {key:item.dataset.flowKey,center:r.top-parent.top+r.height/2,height:r.height,selected:item.classList.contains('is-selected')||item.classList.contains('active'),weight:Number(s.fontWeight),color:s.color,scale:copy.offsetWidth?c.width/copy.offsetWidth:1,emphasis:Number(getComputedStyle(item).getPropertyValue('--lens-emphasis'))};
    });
@@ -69,7 +69,7 @@ async function startProbe(list){
 }
 async function endProbe(){return page.evaluate(()=>{window.__flowProbe.running=false;return window.__flowProbe.samples})}
 async function waitFlow(list){
- await page.waitForFunction(list=>{const container=document.querySelector(list),item=container?.querySelector('[data-flow-item].is-selected,[data-flow-item].active'),lens=container?.querySelector('.flow-lens');if(!item||!lens)return false;const a=item.getBoundingClientRect(),b=lens.getBoundingClientRect();return Math.abs(a.top+a.height/2-b.top-b.height/2)<.5&&Number(getComputedStyle(lens).opacity)>.98},list);await frames(14);
+ await page.waitForFunction(list=>{const container=document.querySelector(list),item=[...(container?.querySelectorAll('[data-flow-item].is-selected,[data-flow-item].active')||[])].find(item=>item.closest('[data-flow-list]')===container),lens=container?.querySelector(':scope > .flow-lens');if(!item||!lens)return false;const a=item.getBoundingClientRect(),b=lens.getBoundingClientRect();return Math.abs(a.top+a.height/2-b.top-b.height/2)<.5&&Number(getComputedStyle(lens).opacity)>.98},list);await frames(14);
 }
 function verifyTravel(samples,label){
  result.latestMotion={label,samples};
@@ -125,7 +125,7 @@ async function textContrast(selector,name){
 }
 async function refraction(list,name){
  await frames(40);
- const optical=await page.locator(`${list} .flow-lens`).evaluate(lens=>{
+ const optical=await page.locator(`${list} > .flow-lens`).evaluate(lens=>{
   const parent=lens.parentElement,r=lens.getBoundingClientRect(),css=getComputedStyle(lens),filter=css.backdropFilter||css.webkitBackdropFilter;
   window.__refractionProbe={lens,parent,lensStyle:lens.getAttribute('style'),parentStyle:parent.getAttribute('style'),filter};parent.style.background='repeating-linear-gradient(90deg,#153de8 0px,#153de8 4px,#fff 4px,#fff 8px,#f84a19 8px,#f84a19 12px,#111 12px,#111 16px)';
   return {filter,without:filter.replace(/url\([^)]*\)\s*/g,'').trim()||'none',clip:{x:Math.floor(r.left),y:Math.floor(r.top),width:Math.ceil(r.width),height:Math.ceil(r.height)}};
@@ -154,13 +154,13 @@ try{
  const day=await wallpaper('home-day');
  assert.doesNotMatch(await page.locator('#app').innerText(),/\d+\s*(?:篇|套)(?:\s|$)/,'home omits decorative material counts');
  await click('[data-action="nav"][data-route="library"]');const libraryDay=await wallpaper('library-day');assert.ok(difference(day,libraryDay).meanChannelDifference<.5,'routing keeps the same fixed wallpaper position');
- await click('[data-action="open-collection"][data-collection="original"]');
+ await expandLibraryCollection(page,'original');
  const fixture=await makeFixture();await page.locator('#folder-input').setInputFiles(fixture.folder);await page.locator('[data-action="select-paper"][data-paper="wallpaper-original"]').waitFor();if(await page.locator('.dialog-shade:not(.is-closing)').count())await click('[data-action="close-dialog"]');
  assert.equal(await page.locator('.selection-indicator,.paper-select svg rect').count(),0,'suite selection has no duplicate checkbox');
  assert.doesNotMatch(await page.locator('#library-list').innerText(),/\d+\s*(?:篇|套)(?:\s|$)/,'library omits decorative article/suite counts');
- const paperList=await page.locator('[data-flow-list="library"]').evaluate(element=>{const s=getComputedStyle(element);return {radius:s.borderTopLeftRadius,border:s.borderTopWidth,background:s.backgroundColor}});assert.equal(parseFloat(paperList.radius),0,'paper choices are divided rows, without one large rounded outside box');
- const homeBeforePreview=await saved();await enterLibraryPaper(page,'wallpaper-original');assert.equal((await saved()).selectedPaper,homeBeforePreview.selectedPaper);assert.deepEqual((await saved()).homeFocus,homeBeforePreview.homeFocus,'the preview arrow does not select a suite');await wallpaper('library-preview-day');await click('[data-action="library-back"]');await frames(25);
- await startProbe('[data-flow-list="library"]');await click('[data-action="select-paper"][data-paper="wallpaper-original"]');await waitFlow('[data-flow-list="library"]');const libraryMotion=verifyTravel(await endProbe(),'suite lens');assert.equal((await saved()).selectedPaper,'wallpaper-original');pass('suite title selects through one moving lens while its arrow only previews',{paperList,libraryMotion});
+ const paperList=await page.locator('[data-flow-list="library:original"]').evaluate(element=>{const s=getComputedStyle(element);return {radius:s.borderTopLeftRadius,border:s.borderTopWidth,background:s.backgroundColor}});assert.equal(parseFloat(paperList.radius),0,'paper choices are divided rows, without one large rounded outside box');
+ const homeBeforePreview=await saved();await enterLibraryPaper(page,'wallpaper-original');assert.equal((await saved()).selectedPaper,homeBeforePreview.selectedPaper);assert.deepEqual((await saved()).homeFocus,homeBeforePreview.homeFocus,'the preview arrow does not select a suite');await wallpaper('library-preview-day');await collapseLibraryPaper(page,'wallpaper-original');await frames(25);
+ await startProbe('[data-flow-list="library:original"]');await click('[data-action="select-paper"][data-paper="wallpaper-original"]');await waitFlow('[data-flow-list="library:original"]');const libraryMotion=verifyTravel(await endProbe(),'suite lens');assert.equal((await saved()).selectedPaper,'wallpaper-original');pass('suite title selects through one moving lens while its arrow only previews',{paperList,libraryMotion});
 
  await click('[data-action="nav"][data-route="home"]');
  const originalRows=await page.locator('.home-paper-row').evaluateAll(rows=>rows.map(row=>row.dataset.article));
@@ -189,7 +189,7 @@ try{
  // change against its measured elapsed time, not a hardware-specific frame cap.
  assert.ok(fadeSteps.every(step=>step.change>=-.002),'one appearance change never flashes the wallpaper backwards');assert.ok(fadeSteps.every(step=>Math.abs(step.change)<.02+step.elapsedMs*.015),'appearance has no abrupt opacity jump within a presented frame interval');
  const night=await wallpaper('profile-night');assert.ok(difference(day,night).meanChannelDifference>5,'the night wallpaper paints distinctly different actual pixels');
- await click('[data-action="nav"][data-route="home"]');await wallpaper('home-night');await click('[data-action="nav"][data-route="library"]');await wallpaper('library-night');await click('[data-action="open-collection"][data-collection="original"]');await enterLibraryPaper(page,'wallpaper-original');await click('[data-action="open"][data-paper="wallpaper-original"][data-article="one"]');await click('[data-action="display"][data-display="original"]');await wallpaper('reader-night');const nightContrast={selected:await textContrast('.sentence.active .en','selected-night'),ordinary:await textContrast('.sentence:not(.active) .en','ordinary-night')};await click('[data-action="mode"][data-mode="exam"]');await wallpaper('quiz-night');pass('all pages share the day/night wallpaper and a gradual cross-fade',{recordCard,fade,nightContrast});
+ await click('[data-action="nav"][data-route="home"]');await wallpaper('home-night');await click('[data-action="nav"][data-route="library"]');await wallpaper('library-night');await expandLibraryCollection(page,'original');await enterLibraryPaper(page,'wallpaper-original');await click('[data-action="open"][data-paper="wallpaper-original"][data-article="one"]');await click('[data-action="display"][data-display="original"]');await wallpaper('reader-night');const nightContrast={selected:await textContrast('.sentence.active .en','selected-night'),ordinary:await textContrast('.sentence:not(.active) .en','ordinary-night')};await click('[data-action="mode"][data-mode="exam"]');await wallpaper('quiz-night');pass('all pages share the day/night wallpaper and a gradual cross-fade',{recordCard,fade,nightContrast});
 
  await page.emulateMedia({reducedMotion:'reduce'});await click('[data-action="nav"][data-route="home"]');await click('[data-action="nav"][data-route="profile"]');await click('[data-action="theme"][data-theme="light"]');assert.equal(await page.locator('#wallpaper-scene .wallpaper-night').evaluate(element=>Number(getComputedStyle(element).opacity)),0,'reduced motion changes the wallpaper without a hidden animation tail');await click('[data-action="import"]');await page.locator('.dialog').waitFor();await page.screenshot({path:path.join(output,'import-day.png')});assert.equal(await page.locator('.dialog .format-details').count(),0);await click('[data-action="close-dialog"]');pass('reduced motion and import retain the shared wallpaper without residual overlays');
  assert.deepEqual(result.pageErrors,[]);assert.deepEqual(result.failedImages,[]);result.passed=true;console.log(JSON.stringify({passed:true,checks:result.checks.length,entrySha256:result.entrySha256,output}));

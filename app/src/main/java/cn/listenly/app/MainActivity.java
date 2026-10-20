@@ -28,6 +28,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
+import android.widget.FrameLayout;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -69,6 +70,7 @@ public final class MainActivity extends Activity {
     private static final int MAX_INLINE_BYTES = 16 * 1024 * 1024;
     private static final int MAX_FILES = 25000;
     private WebView webView;
+    private volatile ThemeTransitionOverlay themeTransition;
     private File importsRoot;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private volatile boolean importing;
@@ -133,6 +135,9 @@ public final class MainActivity extends Activity {
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 return serve(request.getUrl(), request.getRequestHeaders(), request.getMethod());
             }
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                if (themeTransition != null) themeTransition.cancel();
+            }
             @Override public void onPageFinished(WebView view, String url) { pushInsets(true); }
             @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 boolean current = view == webView;
@@ -176,7 +181,11 @@ public final class MainActivity extends Activity {
             }
             return insets;
         });
-        setContentView(webView);
+        FrameLayout webHost = new FrameLayout(this);
+        webHost.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        themeTransition = new ThemeTransitionOverlay(this, webHost, webView);
+        setContentView(webHost);
         webView.requestApplyInsets();
         requestHighRefreshRateSafely();
         webView.loadUrl(START);
@@ -212,6 +221,7 @@ public final class MainActivity extends Activity {
 
     private void disposeWebView(WebView view) {
         if (view == null) return;
+        if (themeTransition != null) { themeTransition.cancel(); themeTransition = null; }
         if (themedWebView == view) themedWebView = null;
         if (frameRateView == view) { frameRateView = null; requestedViewFrameRate = 0; }
         try {
@@ -432,8 +442,14 @@ public final class MainActivity extends Activity {
         requestHighRefreshRateSafely();
     }
 
+    @Override protected void onPause() {
+        if (themeTransition != null) themeTransition.cancel();
+        super.onPause();
+    }
+
     @Override public void onConfigurationChanged(Configuration configuration) {
         super.onConfigurationChanged(configuration);
+        if (themeTransition != null) themeTransition.cancel();
         requestHighRefreshRateSafely();
     }
 
@@ -473,6 +489,25 @@ public final class MainActivity extends Activity {
     }
 
     private final class AndroidBridge {
+        @JavascriptInterface public boolean beginThemeTransition(long id) {
+            if (id <= 0 || id > Integer.MAX_VALUE || themeTransition == null) return false;
+            runOnUiThread(() -> { if (themeTransition != null) themeTransition.begin(id); });
+            return true;
+        }
+
+        @JavascriptInterface public void animateThemeTransition(long id, boolean toOriginal) {
+            runOnUiThread(() -> { if (themeTransition != null) themeTransition.animate(id, toOriginal); });
+        }
+
+        @JavascriptInterface public void finishThemeTransition(long id) {
+            runOnUiThread(() -> { if (themeTransition != null) themeTransition.finish(id); });
+        }
+
+        @JavascriptInterface public String getThemeTransitionDiagnostics() {
+            ThemeTransitionOverlay transition = themeTransition;
+            return transition == null ? "{}" : transition.diagnostics();
+        }
+
         @JavascriptInterface public void setTheme(String theme) {
             if (!"light".equals(theme) && !"dark".equals(theme)) return;
             runOnUiThread(() -> {
