@@ -308,6 +308,9 @@ jobs:
           ram-size: 3072M
           disk-size: 6144M
           disable-linux-hw-accel: false
+          # Theme rendering must exercise the animated path, not Android's
+          # animator-duration-scale=0 / prefers-reduced-motion shortcut.
+          disable-animations: false
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           pre-emulator-launch-script: |
