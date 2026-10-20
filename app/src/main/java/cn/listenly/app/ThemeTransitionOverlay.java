@@ -28,7 +28,7 @@ public final class ThemeTransitionOverlay {
     private static final long MAX_PIXELS = 2_000_000L;
     private static final long DURATION_MS = 260L;
     private static final long CAPTURE_TIMEOUT_MS = 900L;
-    private static final long VISUAL_TIMEOUT_MS = 500L;
+    private static final long VISUAL_TIMEOUT_MS = 1200L;
     private static final int MAX_RECORDS = 32;
     private static final PathInterpolator EASING = new PathInterpolator(.4f, 0f, .2f, 1f);
     private final Activity activity;
@@ -37,6 +37,7 @@ public final class ThemeTransitionOverlay {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<JSONObject> records = new ArrayDeque<>();
     private final AtomicBoolean diagnosticRefreshQueued = new AtomicBoolean();
+    private volatile boolean diagnosticsObserved;
     private volatile String cachedDiagnostics = "{\"active\":false}";
     private Session current;
     private JSONObject lastSession = new JSONObject();
@@ -51,6 +52,8 @@ public final class ThemeTransitionOverlay {
         ImageView image;
         Runnable captureTimeout, visualTimeout;
         boolean capturePending, ready, displayed, animateQueued, queuedOriginal, firstVisualReady;
+        int alphaFrames, intermediateAlphaFrames;
+        float minIntermediateAlpha = 1f, maxIntermediateAlpha;
         int width, height, sourceWidth, sourceHeight, copyResult = -1, animations;
         long captureMs;
         float targetAlpha = 1f;
@@ -137,7 +140,9 @@ public final class ThemeTransitionOverlay {
                     image.setFocusableInTouchMode(false);
                     image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                     image.setContentDescription(null);
-                    image.setAlpha(1f);
+                    // Keep the live WebView compositable while its first new
+                    // frame is pending. Verified against the opaque variant.
+                    image.setAlpha(.999f);
                     image.setImageBitmap(captured);
                     FrameLayout.LayoutParams layout = new FrameLayout.LayoutParams(session.sourceWidth, session.sourceHeight);
                     layout.gravity = Gravity.TOP | Gravity.LEFT;
@@ -250,6 +255,7 @@ public final class ThemeTransitionOverlay {
 
     /** Background bridge callers get a labelled last-UI sample and queue a refresh. */
     public String diagnostics() {
+        diagnosticsObserved = true;
         if (Looper.myLooper() == Looper.getMainLooper()) {
             refreshDiagnostics();
         } else if (diagnosticRefreshQueued.compareAndSet(false, true)) {
@@ -277,11 +283,10 @@ public final class ThemeTransitionOverlay {
         }
         ++session.animations;
         ++nativeAnimationCount;
-        // A static ImageView texture is alpha-composited by the native view
-        // pipeline. withLayer requests a hardware layer; it is not a promise
-        // that every vendor drives the animation timeline on RenderThread.
+        // ImageView already draws one texture: avoid a second full-window
+        // offscreen layer. Actual vendor timing still needs a device trace.
         session.image.animate().alpha(target).setDuration(DURATION_MS).setInterpolator(EASING)
-                .withLayer().setListener(new AnimatorListenerAdapter() {
+                .setListener(new AnimatorListenerAdapter() {
                     private boolean cancelled;
                     @Override public void onAnimationCancel(Animator animator) { cancelled = true; }
                     @Override public void onAnimationEnd(Animator animator) {
@@ -292,7 +297,27 @@ public final class ThemeTransitionOverlay {
                         notifyEnd(session, toOriginal);
                     }
                 }).start();
+        if (diagnosticsObserved) sampleAnimationAlpha(session, animation);
         refreshDiagnostics();
+    }
+
+    private void sampleAnimationAlpha(Session session, long animation) {
+        // Explicit diagnostics only: no per-frame JSON, bridge calls or page
+        // work. Ordinary application use never schedules this sampler.
+        session.image.postOnAnimation(new Runnable() {
+            @Override public void run() {
+                if (!isCurrent(session) || session.animationRequest != animation
+                        || session.image == null || !"animating".equals(session.phase)) return;
+                float alpha = session.image.getAlpha();
+                ++session.alphaFrames;
+                if (alpha > .02f && alpha < .98f) {
+                    ++session.intermediateAlphaFrames;
+                    session.minIntermediateAlpha = Math.min(session.minIntermediateAlpha, alpha);
+                    session.maxIntermediateAlpha = Math.max(session.maxIntermediateAlpha, alpha);
+                }
+                session.image.postOnAnimation(this);
+            }
+        });
     }
 
     private void stopAnimation(Session session) {
@@ -401,6 +426,10 @@ public final class ThemeTransitionOverlay {
         return json("id", session.id, "generation", session.generation, "phase", session.phase,
                 "ready", session.ready, "capturePending", session.capturePending,
                 "firstVisualReady", session.firstVisualReady,
+                "alphaFrames", session.alphaFrames,
+                "intermediateAlphaFrames", session.intermediateAlphaFrames,
+                "minIntermediateAlpha", session.minIntermediateAlpha,
+                "maxIntermediateAlpha", session.maxIntermediateAlpha,
                 "pixelCopyResult", session.copyResult, "captureMs", session.captureMs,
                 "width", session.width, "height", session.height, "pixels", (long) session.width * session.height,
                 "sourceWidth", session.sourceWidth, "sourceHeight", session.sourceHeight,
