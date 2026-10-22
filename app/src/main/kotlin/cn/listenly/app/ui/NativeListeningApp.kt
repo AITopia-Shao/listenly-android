@@ -48,13 +48,13 @@ import org.json.JSONArray
     val colors = if (dark) darkColorScheme(
         primary = orange, onPrimary = Color.Black, onBackground = orange,
         background = Color.Black, surface = Color.Transparent, onSurface = orange,
-        surfaceContainer = Color(0xD9161413), onSurfaceContainer = orange,
+        surfaceContainer = Color(0xB8161413), onSurfaceContainer = orange,
         onSurfaceVariantSummary = Color(0xFFBDA799), onSurfaceVariantActions = orange.copy(alpha = .7f),
         secondaryVariant = Color(0x55262320), onSecondaryVariant = orange,
     ) else lightColorScheme(
         primary = foreground, onPrimary = Color.White, onBackground = foreground,
         background = Color(0xFFF7F7F7), surface = Color.Transparent, onSurface = foreground,
-        surfaceContainer = Color(0xDAFFFFFF), onSurfaceContainer = foreground,
+        surfaceContainer = Color(0xB8FFFFFF), onSurfaceContainer = foreground,
         onSurfaceVariantSummary = Color(0xFF555B60), onSurfaceVariantActions = Color(0xFF555B60),
         secondaryVariant = Color(0x55FFFFFF), onSecondaryVariant = foreground,
     )
@@ -136,12 +136,19 @@ import org.json.JSONArray
             }
         }
     }
-    if (selected) GlassPanel(Modifier.fillMaxWidth(), selected = true, radius = 21.dp) { body() } else body()
+    GlassPanel(Modifier.fillMaxWidth(), selected = selected, radius = 21.dp) { body() }
     HorizontalDivider(color = accent().copy(alpha = .12f), modifier = Modifier.padding(horizontal = 12.dp))
 }
 
 @Composable private fun LibraryPage(store: NativeUiStore) {
     val catalog = store.catalog
+    // The upstream popup owns its native motion and shape; avoid painting a
+    // second opaque background on every row over its translucent surface.
+    val menuColors = DropdownDefaults.dropdownColors(
+        containerColor = Color.Transparent,
+        selectedContainerColor = accent().copy(alpha = .10f),
+        selectedContentColor = accent(), selectedIndicatorColor = accent(),
+    )
     val years = remember(catalog) { catalog.papers.map { it.year }.filter { it.isNotBlank() && it != "0" }.distinct().sortedDescending() }
     val papers = catalog.papers.filter { (store.filterYear.isBlank() || it.year == store.filterYear) && when (store.filterMaterial) {
         "saved" -> it.articles.any { article -> JSONArray(listOf(it.id, article.id)).toString() in store.state.bookmarks }
@@ -154,6 +161,7 @@ import org.json.JSONArray
                 GlassPanel(Modifier.weight(1f), radius = 18.dp) {
                     OverlayDropdownMenu(
                         title = store.filterYear.ifEmpty { "全部年份" },
+                        dropdownColors = menuColors,
                         entry = DropdownEntry(items = (listOf("") + years).map { year -> DropdownItem(text = year.ifEmpty { "全部年份" }, selected = store.filterYear == year, onClick = { store.filterYear = year }) }),
                         insideMargin = PaddingValues(horizontal = 12.dp, vertical = 11.dp), maxHeight = 360.dp,
                     )
@@ -162,6 +170,7 @@ import org.json.JSONArray
                     val types = listOf("all" to "全部材料", "saved" to "收藏", "real" to "六级真题")
                     OverlayDropdownMenu(
                         title = types.firstOrNull { it.first == store.filterMaterial }?.second ?: "全部材料",
+                        dropdownColors = menuColors,
                         entry = DropdownEntry(items = types.map { (id, title) -> DropdownItem(text = title, selected = store.filterMaterial == id, onClick = { store.filterMaterial = id }) }),
                         insideMargin = PaddingValues(horizontal = 12.dp, vertical = 11.dp), maxHeight = 360.dp,
                     )
@@ -186,7 +195,7 @@ import org.json.JSONArray
                                     RotatingDisclosure(open, "预览${paper.title}") { store.expandedPapers[paper.id] = !open }
                                 }
                             }
-                            if (selected) GlassPanel(Modifier.fillMaxWidth(), selected = true, radius = 20.dp) { row() } else row()
+                            GlassPanel(Modifier.fillMaxWidth(), selected = selected, radius = 20.dp) { row() }
                             HorizontalDivider(color = accent().copy(alpha = .12f), modifier = Modifier.padding(horizontal = 14.dp))
                             AnimatedVisibility(open, enter = expandVertically(spring(dampingRatio = .85f, stiffness = 420f)) + fadeIn(), exit = shrinkVertically(spring(dampingRatio = .9f, stiffness = 450f)) + fadeOut()) {
                                 Column(Modifier.fillMaxWidth().padding(start = 11.dp).then(if (!open) Modifier.clearAndSetSemantics {} else Modifier)) {
@@ -332,17 +341,19 @@ import org.json.JSONArray
     val state = store.state
     val questions = state.questions.ifEmpty { article.questions }
     val dark = LocalNativeDark.current
-    val correctColor = if (dark) Color(0xFF79DCA8) else Color(0xFF176B40)
-    val wrongColor = if (dark) Color(0xFFFF9990) else Color(0xFFAA2D28)
+    val correctColor = if (dark) Color(0xFF79DCA8) else Color(0xFF0F5F35)
+    val wrongColor = if (dark) Color(0xFFFF9990) else Color(0xFF962822)
     LazyColumn(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         itemsIndexed(questions, key = { _, question -> "${state.active.paper}/${article.id}/${question.id}" }) { index, question ->
             val key = "${state.active.paper}/${article.id}/${question.id}"
-            val expanded = store.expandedQuestions[key] != false
+            val expanded = store.expandedQuestions[key] ?: (index == 0)
+            val chosen = question.options.firstOrNull { it.selected || (question.choice.isNotBlank() && (it.id == question.choice || it.key == question.choice)) }
             Column {
                 Card(Modifier.fillMaxWidth().nativeBounce(), colors = CardDefaults.defaultColors(Color.Transparent, accent()), onClick = { store.expandedQuestions[key] = !expanded; store.action("toggle-question", "index" to index) }) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 32.dp).padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(question.number.toString(), Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        if (!expanded && question.choice.isNotBlank()) Text(question.choice, fontSize = 13.sp, color = muted())
+                        Text(question.number.toString(), Modifier.width(27.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        if (!expanded && chosen != null) Text("${chosen.key}  ${chosen.text}", Modifier.weight(1f), fontSize = 13.sp, color = when { chosen.wrong -> wrongColor; chosen.correct -> correctColor; else -> muted() }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        else Spacer(Modifier.weight(1f))
                         RotatingDisclosure(expanded, if (expanded) "收起第${question.number}题选项" else "展开第${question.number}题选项") { store.expandedQuestions[key] = !expanded; store.action("toggle-question", "index" to index) }
                     }
                 }
@@ -358,7 +369,7 @@ import org.json.JSONArray
                             val tint by animateColorAsState(tintTarget, label = "answerFeedback")
                             val selected = option.selected || option.correct || option.wrong
                             val row: @Composable () -> Unit = {
-                                Card(Modifier.fillMaxWidth().nativeBounce().testTag("answer-${question.id}-${option.id}").semantics { contentDescription = "第${question.number}题选项${option.key}" }, colors = CardDefaults.defaultColors(Color.Transparent, accent()), onClick = if (!question.submitted) ({ store.action("answer", "index" to index, "optionId" to option.id, "choice" to option.key) }) else null) {
+                                Card(Modifier.fillMaxWidth().nativeBounce().testTag("answer-${question.id}-${option.id}").semantics { contentDescription = "第${question.number}题选项${option.key}" }, colors = CardDefaults.defaultColors(Color.Transparent, accent()), onClick = if (!question.submitted) ({ store.expandedQuestions[key] = false; store.action("answer", "index" to index, "optionId" to option.id, "choice" to option.key) }) else null) {
                                     Row(Modifier.fillMaxWidth().heightIn(min = 35.dp).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                         val textColor = when { option.wrong -> wrongColor; option.correct -> correctColor; else -> accent() }
                                         Text(option.key, Modifier.width(25.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = textColor)
@@ -379,7 +390,7 @@ import org.json.JSONArray
                 TextButton(
                     text = if (state.complete) "重新作答" else "提交", onClick = { store.action(if (state.complete) "restart-quiz" else "submit-article") },
                     modifier = Modifier.fillMaxWidth().nativeBounce(), enabled = state.canSubmit || state.complete,
-                    colors = ButtonDefaults.textButtonColors(color = Color.Transparent, contentColor = accent()),
+                    colors = ButtonDefaults.textButtonColors(color = Color.Transparent, disabledColor = Color.Transparent, textColor = accent(), disabledTextColor = muted().copy(alpha = .5f)),
                 )
             }
         }

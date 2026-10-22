@@ -21,7 +21,7 @@ await mkdir(output, { recursive: true });
 const result = {
   serial, apk: path.resolve(apk), label, flags, startedAt: new Date().toISOString(),
   apkSha256: createHash('sha256').update(await readFile(apk)).digest('hex'),
-  checks: [], nativeTouches: [],
+  checks: [], nativeTouches: [], nativeScrolls: [],
   measurementScope: 'Emulator functional and frame evidence; not a GT7 120-fps measurement',
 };
 const run = (args, binary = false) => execFileSync(adb, ['-s', serial, ...args], {
@@ -29,15 +29,16 @@ const run = (args, binary = false) => execFileSync(adb, ['-s', serial, ...args],
 });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const json = url => new Promise((resolve, reject) => {
-  http.get(url, response => {
+  const request = http.get(url, response => {
     let body = '';
     response.on('data', chunk => body += chunk);
     response.on('end', () => { try { resolve(JSON.parse(body)); } catch (error) { reject(error); } });
   }).on('error', reject);
+  request.setTimeout(5000, () => request.destroy(new Error('Engine discovery request timed out')));
 });
 let socket, forwarded = false, evaluate, snapshot;
 const pass = (name, data = {}) => { result.checks.push({ name, passed: true, ...data }); console.log('PASS ' + name); };
-const decode = value => value.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const decode = value => value.replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_, code) => String.fromCodePoint(code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : Number(code))).replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 let dumpNumber = 0;
 async function tree(stage = 'ui') {
   run(['shell', 'uiautomator', 'dump', '--compressed', '/sdcard/listenly-native-ui.xml']);
@@ -52,18 +53,61 @@ async function tree(stage = 'ui') {
     return node;
   });
 }
-async function tap(predicate, name) {
-  const nodes = await tree('before-' + name.replace(/[^a-z0-9-]/gi, '-'));
-  const node = nodes.find(node => predicate(node) && node.rect && node.rect[2] > node.rect[0] && node.rect[3] > node.rect[1] && node.enabled !== 'false');
-  assert.ok(node, 'Native touch target exists: ' + name + '; available: ' + nodes.map(n => n.text || n['content-desc']).filter(Boolean).join(' | '));
+const appNode = node => node.package === 'cn.listenly.app';
+const visibleRect = node => node.rect && node.rect[2] > node.rect[0] && node.rect[3] > node.rect[1];
+const labels = node => [node.text, node['content-desc']].filter(Boolean).flatMap(value => [value.trim(), ...value.split(/\r?\n/).map(line => line.trim())]);
+const matches = (node, text) => labels(node).includes(text);
+function scrollRegion(nodes) {
+  return nodes.filter(node => appNode(node) && node.scrollable === 'true' && node.enabled !== 'false' && visibleRect(node) &&
+    !/SeekBar|HorizontalScrollView/.test(node.class || '') && node.rect[3] - node.rect[1] >= 120)
+    .sort((a, b) => ((b.rect[2] - b.rect[0]) * (b.rect[3] - b.rect[1])) - ((a.rect[2] - a.rect[0]) * (a.rect[3] - a.rect[1])))[0];
+}
+function visibleSignature(nodes, area) {
+  return JSON.stringify(nodes.filter(node => appNode(node) && visibleRect(node) &&
+    (node.rect[0] + node.rect[2]) / 2 >= area[0] && (node.rect[0] + node.rect[2]) / 2 <= area[2] &&
+    (node.rect[1] + node.rect[3]) / 2 >= area[1] && (node.rect[1] + node.rect[3]) / 2 <= area[3])
+    .map(node => [node.text, node['content-desc'], node.bounds]));
+}
+async function locate(predicate, name, { enabled = true, scroll = true } = {}) {
+  const safeName = name.replace(/[^a-z0-9-]/gi, '-');
+  let nodes = await tree('before-' + safeName);
+  const target = () => nodes.find(node => appNode(node) && predicate(node) && visibleRect(node) && (!enabled || node.enabled !== 'false'));
+  let found = target();
+  // Only swipe the current app's exposed vertical scroll container. Header,
+  // navigation, transport and system regions are never used as swipe targets.
+  for (const direction of scroll ? ['down', 'up'] : []) {
+    let prior = null;
+    for (let attempt = 0; !found && attempt < 18; attempt++) {
+      const region = scrollRegion(nodes);
+      if (!region) break;
+      const signature = visibleSignature(nodes, region.rect);
+      if (signature === prior) break;
+      prior = signature;
+      const [left, top, right, bottom] = region.rect, height = bottom - top;
+      const x = Math.round((left + right) / 2), high = Math.round(top + height * .22), low = Math.round(top + height * .78);
+      const gesture = { name, direction, container: region.bounds, x, fromY: direction === 'down' ? low : high, toY: direction === 'down' ? high : low };
+      assert.ok(x > left && x < right && gesture.fromY > top && gesture.fromY < bottom && gesture.toY > top && gesture.toY < bottom);
+      run(['shell', 'input', 'swipe', String(x), String(gesture.fromY), String(x), String(gesture.toY), '340']);
+      result.nativeScrolls.push(gesture);
+      await wait(180);
+      nodes = await tree('scroll-' + safeName + '-' + direction + '-' + attempt);
+      found = target();
+    }
+    if (found) break;
+  }
+  assert.ok(found, 'Native target exists: ' + name + '; available: ' + nodes.map(n => n.text || n['content-desc']).filter(Boolean).join(' | '));
+  return { node: found, nodes };
+}
+async function tap(predicate, name, options = {}) {
+  const { node } = await locate(predicate, name, options);
+  if (options.beforeTap) await options.beforeTap();
   const [left, top, right, bottom] = node.rect;
   const touch = { name, text: node.text, description: node['content-desc'], bounds: node.bounds, x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
   run(['shell', 'input', 'tap', String(touch.x), String(touch.y)]);
   result.nativeTouches.push(touch);
   return touch;
 }
-const matches = (node, text) => node.text === text || node['content-desc'] === text;
-const tapText = (text, name = text) => tap(node => matches(node, text), name);
+const tapText = (text, name = text, options) => tap(node => matches(node, text), name, options);
 async function poll(read, predicate, description, timeout = 15000) {
   const until = Date.now() + timeout;
   let value;
@@ -92,7 +136,7 @@ try {
   assert.ok(result.pid);
   run(['forward', 'tcp:9333', 'localabstract:webview_devtools_remote_' + result.pid]);
   forwarded = true;
-  const target = await poll(() => json('http://127.0.0.1:9333/json'), targets => targets.some(target => target.url.includes('listenly.local')), 'offline engine debug target');
+  const target = await poll(() => json('http://127.0.0.1:9333/json').catch(() => []), targets => targets.some(target => target.url.includes('listenly.local')), 'offline engine debug target');
   socket = new WebSocket(target.find(target => target.url.includes('listenly.local')).webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
   let sequence = 0;
@@ -152,8 +196,8 @@ try {
   delete result.frameStats;
   result.motion = await evaluate('typeof Android.getNativeUiDiagnostics==="function"?JSON.parse(Android.getNativeUiDiagnostics()):null');
   assert.ok(result.motion?.enabled, 'Debug native animation diagnostics are available');
-  const segments = result.motion.segments.filter(segment => segment.from !== segment.to && !segment.cancelled);
-  assert.ok(segments.length >= 2, 'Native theme slider records several independent transitions');
+  const segments = result.motion.segments.filter(segment => segment.label === '日间|夜间' && segment.from !== segment.to && !segment.cancelled);
+  assert.ok(segments.length >= 2, 'The day/night slider itself records several independent transitions');
   for (const segment of segments) {
     const low = Math.min(segment.from, segment.to), high = Math.max(segment.from, segment.to);
     assert.ok(segment.frames.some(frame => frame.position > low + .01 && frame.position < high - .01), 'Native slider has visible intermediate positions');
@@ -170,25 +214,23 @@ try {
   const collection = paper.collection;
   await tapText(collection.title, 'expand-collection');
   await wait(500);
-  let libraryTree = await tree('expanded-collection');
-  assert.ok(libraryTree.some(node => (node.text || '').includes(paper.title) || (node['content-desc'] || '').includes(paper.title)));
+  // The chosen paper may be below the first viewport in a full local corpus.
+  // Locate its real disclosure instead of asserting it is already on screen.
+  await locate(node => matches(node, '预览' + paper.title), 'paper-preview-disclosure');
   await tap(node => node['content-desc'] === '预览' + paper.title, 'expand-paper');
   await wait(500);
+  const article = paper.articles[0];
+  await locate(node => matches(node, article.title), 'expanded-first-article');
   assert.equal((await snapshot()).state.selectedPaper, beforePreview, 'Expanding a paper only previews it');
   await shot('library-expanded');
   await tapText(collection.title, 'collapse-collection');
   await wait(500);
-  libraryTree = await tree('collapsed-collection');
-  assert.ok(!libraryTree.some(node => node.text === paper.articles[0].title), 'Collapsed articles leave the accessibility tree');
+  const libraryTree = await tree('collapsed-collection');
+  assert.ok(!libraryTree.some(node => matches(node, article.title)), 'Collapsed articles leave the accessibility tree');
   await tapText(collection.title, 'reexpand-collection');
   await wait(500);
-  // Disclosure state survives hiding a collection; expand only when needed.
-  libraryTree = await tree('library-before-open');
-  if (!libraryTree.some(node => node.text === paper.articles[0].title || node['content-desc'] === paper.articles[0].title)) {
-    await tap(node => node['content-desc'] === '预览' + paper.title, 'reexpand-paper');
-    await wait(500);
-  }
-  const article = paper.articles[0];
+  // Native disclosure state survives hiding its collection. Search the
+  // reopened content; an off-screen or merged Text is not a collapsed paper.
   await tap(node => matches(node, article.title) || node['content-desc'] === '打开' + article.title, 'open-article');
   await stateIs(state => state.route === 'practice' && state.active.article === article.id, 'native reader');
   assert.equal((await snapshot()).state.display, 'hidden');
@@ -206,39 +248,79 @@ try {
 
   await tapText('做题', 'exam-mode');
   await stateIs(state => state.mode === 'exam', 'exam mode');
-  const questions = (await snapshot()).state.questions;
+  let questions = (await snapshot()).state.questions;
   assert.ok(questions.length);
+  if ((await snapshot()).state.complete) {
+    result.existingSubmitted = questions;
+    pass('existing submitted answers survive installation and remain reviewable');
+    await tapText('重新作答', 'prepare-new-attempt');
+    await stateIs(state => !state.complete && state.questions.every(q => !q.submitted), 'native new-attempt setup');
+    questions = (await snapshot()).state.questions;
+  }
+  const wrongIndex = questions.findIndex(question => !question.submitted && question.answer && question.options.some(option => option.id !== question.answer));
+  assert.ok(wrongIndex >= 0, 'One unanswered question has a known correct and wrong option');
   for (let index = 0; index < questions.length; index++) {
     const question = questions[index];
     if (question.submitted) continue;
-    let nodes = await tree('question-' + index);
-    const visibleOption = nodes.some(node => (node['content-desc'] || '').includes(question.options[0].text) || node.text === question.options[0].text);
-    if (!visibleOption) {
-      await tap(node => node['content-desc'] === '展开第' + question.number + '题选项' || node.text === String(question.number), 'expand-question-' + index);
-    }
+    const expand = '展开第' + question.number + '题选项', collapse = '收起第' + question.number + '题选项';
+    const { node: disclosure } = await locate(node => matches(node, expand) || matches(node, collapse), 'question-disclosure-' + index);
+    if (matches(disclosure, expand)) await tap(node => matches(node, expand), 'expand-question-' + index);
     const correct = question.options.find(option => option.id === question.answer);
     const wrong = question.options.find(option => option.id !== question.answer);
-    const choice = index === 0 ? wrong : correct || question.options[0];
-    await tap(node => node['content-desc'] === '第' + question.number + '题选项' + choice.key || node.text === choice.text, 'answer-' + index);
-    await stateIs(state => state.questions[index].choice === choice.id, 'native answer selected');
+    const choice = index === wrongIndex ? wrong : correct || question.options[0];
+    await tap(node => matches(node, '第' + question.number + '题选项' + choice.key), 'answer-' + index);
+    await stateIs(state => state.active.article === article.id && state.questions[index].choice === choice.id, 'native answer selected');
   }
-  const beforeSubmit = await snapshot();
-  if (beforeSubmit.state.canSubmit) {
-    await tapText('提交', 'submit-article');
-    const graded = await stateIs(state => state.questions.some(q => q.submitted), 'graded feedback');
-    const first = graded.state.questions[0];
-    assert.ok(first.options.some(option => option.isWrong) && first.options.some(option => option.isCorrect), 'Wrong choice and correct option are both identified');
-    await shot('graded-feedback');
-    result.graded = graded;
-    pass('native submit projects persistent red wrong / green correct feedback');
-    if (paper.articles.length > 1) {
-      const next = await stateIs(state => state.active.article !== article.id, 'automatic next article after feedback');
-      pass('submitted article advances to the next article', { next: next.state.active.article });
-    }
-  } else {
-    assert.ok(beforeSubmit.state.complete, 'An existing completed article remains graded on upgrade');
-    pass('existing submitted answers survive installation and remain reviewable');
+  assert.ok((await snapshot()).state.canSubmit, 'The article is ready for a new native submission');
+  // A timer observes the short business event while Node is blocked in ADB.
+  // It neither sends engine commands nor replaces Android callbacks. Native
+  // screenshot evidence is collected separately after reopening the graded
+  // article, so a 900ms automatic advance cannot silently change its page.
+  const startGradeTrace = () => evaluate(`(()=>{
+    if(window.__nativeSmokeGradeTimer)clearInterval(window.__nativeSmokeGradeTimer);
+    const trace=window.__nativeSmokeGrade={startedAt:performance.now(),samples:[],graded:null,finished:false};
+    const capture=()=>{const value=window.listenlyNativeSnapshot(),state=value.state;
+      const sample={at:performance.now(),active:state.active,feedbackPending:state.feedbackPending,complete:state.complete,questions:state.questions};trace.samples.push(sample);
+      if(state.active.paper===${JSON.stringify(paper.id)}&&state.active.article===${JSON.stringify(article.id)}&&state.questions.length&&state.questions.every(q=>q.submitted)){trace.graded=sample;trace.finished=true}
+      if(performance.now()-trace.startedAt>5000)trace.finished=true;
+      if(trace.finished){clearInterval(window.__nativeSmokeGradeTimer);window.__nativeSmokeGradeTimer=null}
+    };window.__nativeSmokeGradeTimer=setInterval(capture,60);capture();return true;
+  })()`);
+  await tapText('提交', 'submit-article', { beforeTap: startGradeTrace });
+  const trace = await poll(() => evaluate('window.__nativeSmokeGrade'), value => value?.finished, 'observed submit feedback trace');
+  result.gradingTrace = trace;
+  assert.ok(trace.graded, 'The short grading window was observed; a missed event cannot count as feedback evidence');
+  const first = trace.graded.questions[wrongIndex];
+  assert.ok(first.options.some(option => option.isWrong) && first.options.some(option => option.isCorrect), 'Wrong choice and correct option are both retained by the engine');
+  pass('a real native submission produces persistent wrong-choice and correct-option business state', { question: first.id });
+  const nextArticle = paper.articles.slice(paper.articles.findIndex(item => item.id === article.id) + 1).find(item => item.questions?.length);
+  result.coverage = { sentenceSeek: !!sentence, automaticNext: !!nextArticle, fixture: flags.includes('--fixture'), note: 'A one-article untimed fixture does not verify native sentence navigation or automatic next; demo/Lite runs cover those branches separately.' };
+  if (nextArticle) {
+    const next = await stateIs(state => state.active.paper === paper.id && state.active.article === nextArticle.id, 'automatic next article after feedback');
+    pass('submitted article advances to the exact next article', { next: next.state.active.article });
+    await tapText('返回', 'return-for-graded-review');
+    await stateIs(state => state.route === 'home', 'home before persistent grade review');
+    await tap(node => matches(node, '阅读' + article.title), 'reopen-graded-article');
+    await stateIs(state => state.route === 'practice' && state.active.paper === paper.id && state.active.article === article.id, 'graded article reopened through native controls');
+    await tapText('做题', 'review-exam-mode');
   }
+  await stateIs(state => state.active.article === article.id && state.complete && !state.feedbackPending, 'persistent graded article is stable for capture');
+  const wrong = first.options.find(option => option.isWrong), correct = first.options.find(option => option.isCorrect);
+  const wrongLabel = '第' + first.number + '题选项' + wrong.key, correctLabel = '第' + first.number + '题选项' + correct.key;
+  await locate(node => matches(node, wrongLabel), 'review-wrong-option', { enabled: false });
+  await locate(node => matches(node, correctLabel), 'review-correct-option', { enabled: false });
+  const reviewTree = await tree('graded-review');
+  const captureBefore = await snapshot();
+  await shot('graded-feedback');
+  const captureAfter = await snapshot();
+  const sameArticle = value => value.state.route === 'practice' && value.state.mode === 'exam' && value.state.active.paper === paper.id && value.state.active.article === article.id && value.state.complete;
+  result.gradedCapture = { file: 'graded-feedback.png', before: captureBefore.state.active, after: captureAfter.state.active,
+    wrongLabel, correctLabel, wrongVisible: reviewTree.some(node => matches(node, wrongLabel)), correctVisible: reviewTree.some(node => matches(node, correctLabel)),
+    missed: !sameArticle(captureBefore) || !sameArticle(captureAfter),
+    scope: 'Native screenshot and accessibility presence bound to the reviewed article; color pixels are captured, not asserted from engine flags.' };
+  result.gradedCapture.missed ||= !result.gradedCapture.wrongVisible || !result.gradedCapture.correctVisible;
+  assert.ok(!result.gradedCapture.missed, 'A wrong-page or missing-option screenshot cannot count as native feedback capture');
+  pass('both graded options remain visible on the same native article during screenshot capture', result.gradedCapture);
   await shot('final');
   result.final = await snapshot();
   result.crashLog = run(['logcat', '-d', '-b', 'crash', '-v', 'threadtime']);
@@ -254,6 +336,7 @@ try {
 } finally {
   try { await writeFile(path.join(output, 'logcat.log'), run(['logcat', '-d', '-v', 'threadtime'])); } catch {}
   try { await writeFile(path.join(output, 'crash.log'), run(['logcat', '-d', '-b', 'crash', '-v', 'threadtime'])); } catch {}
+  if (evaluate) try { await evaluate('window.__nativeSmokeGradeTimer&&clearInterval(window.__nativeSmokeGradeTimer)'); } catch {}
   if (socket) socket.close();
   if (forwarded) try { run(['forward', '--remove', 'tcp:9333']); } catch {}
   result.finishedAt = new Date().toISOString();

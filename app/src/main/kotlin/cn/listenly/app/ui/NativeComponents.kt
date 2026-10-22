@@ -131,11 +131,14 @@ internal fun clock(value: Double): String {
     val progress = store.progress.value
     val paper = store.catalog.paper(reference.paper)
     val article = store.catalog.article(reference.paper, reference.article)
-    val same = state.active.paper == reference.paper && (progress.paper.isBlank() || progress.paper == reference.paper)
-    val duration = (if (same && progress.duration > 0) progress.duration else paper?.duration ?: 0.0).coerceAtLeast(0.0)
-    val observedTime = if (same) progress.time else article?.start ?: 0.0
+    val same = state.active.paper == reference.paper
+    // Home progress also carries the selected paper's saved clock before its
+    // decoder becomes active. Reading it must not imply that paper is playing.
+    val matchingProgress = progress.paper == reference.paper
+    val duration = (if (matchingProgress && progress.duration > 0) progress.duration else paper?.duration ?: 0.0).coerceAtLeast(0.0)
+    val observedTime = if (matchingProgress) progress.time else article?.start ?: 0.0
     val time = store.scrubTime.value ?: observedTime
-    val playing = same && state.playing
+    val playing = same && matchingProgress && progress.playing
     Column(modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             Text(clock(time), fontSize = 11.sp, color = muted(), modifier = Modifier.width(38.dp))
@@ -150,7 +153,7 @@ internal fun clock(value: Double): String {
                     store.commitScrub(target)
                 },
                 valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
-                enabled = same && duration > 0 && paper?.audioAvailable != false,
+                enabled = duration > 0 && paper?.audioAvailable == true,
                 height = 24.dp, modifier = Modifier.weight(1f),
             )
             Text(clock(duration), fontSize = 11.sp, color = muted(), modifier = Modifier.width(38.dp))

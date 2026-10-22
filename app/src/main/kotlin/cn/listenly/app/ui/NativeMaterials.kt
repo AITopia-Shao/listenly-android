@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.composed
+import androidx.compose.ui.composed
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -76,7 +76,7 @@ internal fun Modifier.nativeBounce(): Modifier = composed {
 
 @Composable internal fun GlassPanel(modifier: Modifier = Modifier, selected: Boolean = false, radius: Dp = 24.dp, color: Color? = null, content: @Composable BoxScope.() -> Unit) {
     val dark = LocalNativeDark.current
-    val tint = color ?: if (dark) Color(0xFF070707).copy(alpha = if (selected) .57f else .66f) else Color.White.copy(alpha = if (selected) .47f else .67f)
+    val tint = color ?: if (dark) Color(0xFF070707).copy(alpha = if (selected) .57f else .66f) else Color.White.copy(alpha = if (selected) .60f else .67f)
     LocalNativeGlass.current.Surface(modifier, radius, selected, tint, content)
 }
 
@@ -104,12 +104,17 @@ internal fun Modifier.nativeBounce(): Modifier = composed {
     LocalNativeGlass.current.Capture(Modifier.fillMaxSize()) {
         val day = images.first
         val night = images.second
-        if (day != null) Image(day.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFFD1DDEA), Color(0xFFE4C8AE), Color(0xFFB2C6D5)))))
+        Box(Modifier.fillMaxSize()) {
+            if (day != null) Image(day.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFFD1DDEA), Color(0xFFE4C8AE), Color(0xFFB2C6D5)))))
+            Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = .12f)))
+        }
+        // Keep each wash with its image. Only this layer's alpha changes per
+        // frame, so reversing a theme transition cannot jump overall luminance.
         Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha.value }) {
             if (night != null) Image(night.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             else Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF121827), Color(0xFF20202B), Color(0xFF0D1019)))))
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .18f)))
         }
-        Box(Modifier.fillMaxSize().background(if (dark) Color.Black.copy(alpha = .18f) else Color.White.copy(alpha = .12f)))
     }
 }

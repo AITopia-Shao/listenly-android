@@ -14,6 +14,7 @@ on:
       - LICENSES/**
       - tests/native-engine*.mjs
       - tools/android-native-smoke.mjs
+      - tools/verify-native-apk.py
       - app/src/main/res/**
       - app/src/main/AndroidManifest.xml
       - app/src/main/assets/web/*.js
@@ -81,6 +82,7 @@ on:
       - LICENSES/**
       - tests/native-engine*.mjs
       - tools/android-native-smoke.mjs
+      - tools/verify-native-apk.py
       - app/src/main/res/**
       - app/src/main/AndroidManifest.xml
       - app/src/main/assets/web/*.js
@@ -176,6 +178,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_*.py'
           python3 tools/test-range-stream.py
           python3 tools/build-apk-ci.py --demo
+          python3 tools/verify-native-apk.py dist/listenly-demo-test.apk --output .build/demo/native-apk.json
       - name: Test playback, folder import and responsive layouts
         run: |
           npx playwright install --with-deps chromium
@@ -209,6 +212,7 @@ jobs:
             dist/ui-result.json
             .build/demo/build.json
             .build/demo/build.log
+            .build/demo/native-apk.json
             .build/range-stream-tests/result.json
             .build/replay-browser/latest/result.json
             .build/theme-home-profile/
@@ -225,7 +229,7 @@ jobs:
             .build/theme-native/browser/
             .build/library-accordion/
             .build/paper-playback/
-            .build/native-engine/
+            .build/native-engine-browser/
           include-hidden-files: true
           retention-days: 14
 
@@ -307,6 +311,7 @@ jobs:
         run: |
           python3 tools/prepare-ci-assets.py
           python3 tools/build-apk-ci.py
+          python3 tools/verify-native-apk.py dist/listenly-ci-fixture.apk --output .build/ci/native-apk.json
       - name: Enable Linux KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -347,6 +352,7 @@ jobs:
             dist/listenly-ci-fixture.apk
             .build/ci/build.json
             .build/ci/build.log
+            .build/ci/native-apk.json
             .build/ci/sdk-environment.log
             .build/runtime-results/api-${{ matrix.api }}-native/
             .build/range-stream-tests/result.json

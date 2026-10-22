@@ -457,12 +457,12 @@ async function submitCurrentArticle(){
   if(nativeUiEnabled){cancelNativeQuizAdvance();const expected=materialKey();nativeQuizAdvance={timer:setTimeout(()=>{nativeQuizAdvance=null;finishSubmittedArticle(expected).catch(error=>toast(error.message||'无法打开下一篇'))},900)};render()}
   else await finishSubmittedArticle();
 }
-let nativeProfileKey='',nativeProfileCache=null;
+let nativeProfileKey='',nativeProfileCache=null,nativeProfilePapers=null;
 function nativeProfileState(){
   const stats=activitySummary(state),hours=Number(stats.studyHours.toFixed(1));
   const completed=Object.entries(state.articleCompletions).sort((a,b)=>b[1].last-a[1].last);
   const key=JSON.stringify([stats.date,stats.listeningMinutes,stats.completedArticles,stats.completedQuestions,hours,completed.map(([id,value])=>[id,value.last])]);
-  if(key!==nativeProfileKey||!nativeProfileCache){nativeProfileKey=key;nativeProfileCache={todayMinutes:stats.listeningMinutes,todayArticles:stats.completedArticles,totalHours:hours,activity:activityCalendar(state).weeks.flat().filter(day=>day.inRange).map(day=>({date:day.date,count:day.count})),recent:completed.map(([key])=>{let ids;try{ids=JSON.parse(key)}catch{return null}const paper=papers.find(p=>p.id===ids[0]),article=paper?.articles.find(a=>a.id===ids[1]);return article?{paper:paper.id,article:article.id,paperTitle:paper.title,articleTitle:materialTitle(article.title)}:null}).filter(Boolean).slice(0,4)}}
+  if(papers!==nativeProfilePapers||key!==nativeProfileKey||!nativeProfileCache){nativeProfilePapers=papers;nativeProfileKey=key;nativeProfileCache={todayMinutes:stats.listeningMinutes,todayArticles:stats.completedArticles,totalHours:hours,activity:activityCalendar(state).weeks.flat().filter(day=>day.inRange).map(day=>({date:day.date,count:day.count})),recent:completed.map(([key])=>{let ids;try{ids=JSON.parse(key)}catch{return null}const paper=papers.find(p=>p.id===ids[0]),article=paper?.articles.find(a=>a.id===ids[1]);return article?{paper:paper.id,article:article.id,paperTitle:paper.title,articleTitle:materialTitle(article.title)}:null}).filter(Boolean).slice(0,4)}}
   return nativeProfileCache;
 }
 function readNativeCatalog(){

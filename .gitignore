@@ -1,6 +1,7 @@
 .build/
 .tools/
 .gradle/
+.kotlin/
 **/build/
 .idea/
 *.iml

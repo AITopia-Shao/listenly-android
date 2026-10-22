@@ -106,6 +106,10 @@ def build(args: argparse.Namespace) -> None:
     config = (ROOT / "app" / "build.gradle").read_text(encoding="utf-8")
     version_code = re.search(r"\bversionCode\s+(\d+)", config).group(1)
     version_name = re.search(r"\bversionName\s+'([^']+)'", config).group(1)
+    # AGP 9 reads SDK levels exclusively from Gradle. The manifest keeps only
+    # tools:overrideLibrary for the isolated API33 blur implementation.
+    min_sdk = re.search(r"\bminSdk\s+(\d+)", config).group(1)
+    target_sdk = re.search(r"\btargetSdk\s+(\d+)", config).group(1)
     output.parent.mkdir(parents=True, exist_ok=True)
     results = ROOT / ".build" / staging_type
     results.mkdir(parents=True, exist_ok=True)
@@ -139,9 +143,6 @@ def build(args: argparse.Namespace) -> None:
             root.set(f"{{{ANDROID}}}versionCode", version_code)
             root.set(f"{{{ANDROID}}}versionName", version_name)
             root.find("application").set(f"{{{ANDROID}}}debuggable", "true")
-            uses_sdk = root.find("uses-sdk")
-            min_sdk = uses_sdk.attrib[f"{{{ANDROID}}}minSdkVersion"]
-            target_sdk = uses_sdk.attrib[f"{{{ANDROID}}}targetSdkVersion"]
             manifest.write(work / "AndroidManifest.xml", encoding="utf-8", xml_declaration=True)
             # Gradle compiles the genuine Kotlin/Compose/Miuix UI. The public
             # edition's already validated assets are the only selected asset root.
@@ -183,6 +184,7 @@ def build(args: argparse.Namespace) -> None:
             for contract in ("package: name='cn.listenly.app'", f"sdkVersion:'{min_sdk}'", f"targetSdkVersion:'{target_sdk}'", "launchable-activity: name='cn.listenly.app.MainActivity'"):
                 if contract not in badging:
                     raise RuntimeError(f"Manifest contract missing: {contract}")
+            run([sys.executable, ROOT / "tools" / "verify-native-apk.py", work / "signed.apk", "--output", results / "native-apk.json"])
             shutil.copyfile(work / "signed.apk", output)
     metadata = {"apk": str(output), "sha256": hashlib.sha256(output.read_bytes()).hexdigest(), "compileApi": args.compile_api,
                 "minSdk": int(min_sdk), "targetSdk": int(target_sdk), "versionCode": int(version_code), "versionName": version_name,

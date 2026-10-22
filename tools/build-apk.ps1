@@ -3,6 +3,9 @@ param(
     [string]$JdkPath = 'C:\Program Files\Android\openjdk\jdk-21.0.8',
     [string]$OutputPath = '',
     [string]$GradleInitScript = '',
+    [string]$CompiledShellApk = '',
+    [string]$ShellSha256 = '',
+    [string]$ShellSourceCommit = '',
     [switch]$Lite,
     [switch]$Demo
 )
@@ -10,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 $SdkPath = [IO.Path]::GetFullPath($SdkPath)
 $JdkPath = [IO.Path]::GetFullPath($JdkPath)
 if ($Demo -and $Lite) { throw '-Demo and -Lite cannot be combined.' }
+if ($CompiledShellApk -and (!$ShellSha256 -or !$ShellSourceCommit)) { throw 'Compiled-shell reuse requires its verified SHA256 and full immutable source commit.' }
 function Invoke-BuildTool([string]$Executable, [string[]]$Arguments) {
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Build command failed ($LASTEXITCODE): $Executable" }
@@ -165,47 +169,55 @@ if (!$Demo -and (Test-Path -LiteralPath (Join-Path $taskWallpaperCache 'sources.
 # Compile the actual native Kotlin/Compose/Miuix UI and the unchanged Java engine.
 # Assets stay in this edition-specific staging directory, so Gradle's public
 # default can never pull the private corpus into CI/demo builds.
-$taskGradle = Join-Path $taskRoot 'gradlew.bat'
-$taskOldJavaHome = $env:JAVA_HOME
-$taskOldAndroidHome = $env:ANDROID_HOME
-$taskOldSdkRoot = $env:ANDROID_SDK_ROOT
-$taskOldGradleHome = $env:GRADLE_USER_HOME
-$taskOldJavaOptions = $env:JAVA_TOOL_OPTIONS
-try {
-    $env:JAVA_HOME = $JdkPath
-    $env:ANDROID_HOME = $SdkPath
-    $env:ANDROID_SDK_ROOT = $SdkPath
-    $env:GRADLE_USER_HOME = Join-Path $taskRoot '.build\miuix-gradle-user'
-    # MSIX sandbox path virtualization does not support JDK AF_UNIX wake pipes.
-    # A nonexistent socket directory makes the JDK use its built-in TCP fallback.
-    # This changes only the build process; it is never part of the Android app.
-    if ($env:CODEX_WINDOWS_SANDBOX_PACKAGE_FAMILY) {
-        $taskSocketFallback = Join-Path $taskRoot '.build\gradle-no-unix-sockets'
-        if (Test-Path -LiteralPath $taskSocketFallback) { throw 'The Gradle socket fallback path must remain absent.' }
-        $env:JAVA_TOOL_OPTIONS = (($taskOldJavaOptions + ' "-Djdk.net.unixdomain.tmpdir=' + $taskSocketFallback + '"').Trim())
-    }
-    Push-Location -LiteralPath $taskRoot
+if ($CompiledShellApk) {
+    $taskShell = [IO.Path]::GetFullPath($CompiledShellApk)
+    $taskBase = Join-Path $taskBuild 'cloud-compiled-local-assets.apk'
+    Invoke-BuildTool $taskPythonCommand.Source @((Join-Path $taskRoot 'tools\repack-native-assets.py'),
+        $taskShell,$taskStagedWeb,$taskBase,'--shell-sha256',$ShellSha256,
+        '--source-commit',$ShellSourceCommit,'--report',($OutputPath + '.build-source.json'))
+} else {
+    $taskGradle = Join-Path $taskRoot 'gradlew.bat'
+    $taskOldJavaHome = $env:JAVA_HOME
+    $taskOldAndroidHome = $env:ANDROID_HOME
+    $taskOldSdkRoot = $env:ANDROID_SDK_ROOT
+    $taskOldGradleHome = $env:GRADLE_USER_HOME
+    $taskOldJavaOptions = $env:JAVA_TOOL_OPTIONS
     try {
-        $taskGradleArgs = @(':app:assembleDebug','--no-daemon',
-            ('-PlistenlyAssetsDir=' + (Join-Path $taskBuild 'main\assets')),
-            '-PlistenlySkipAssetPreparation=true')
-        if ($taskRoot -match '[^\x00-\x7F]') { $taskGradleArgs += '-Pandroid.overridePathCheck=true' }
-        if ($GradleInitScript) {
-            $taskInit = [IO.Path]::GetFullPath($GradleInitScript)
-            if (!(Test-Path -LiteralPath $taskInit -PathType Leaf)) { throw 'Gradle init script does not exist.' }
-            $taskGradleArgs += @('--init-script',$taskInit)
+        $env:JAVA_HOME = $JdkPath
+        $env:ANDROID_HOME = $SdkPath
+        $env:ANDROID_SDK_ROOT = $SdkPath
+        $env:GRADLE_USER_HOME = Join-Path $taskRoot '.build\miuix-gradle-user'
+        # MSIX sandbox path virtualization does not support JDK AF_UNIX wake pipes.
+        # A nonexistent socket directory makes the JDK use its built-in TCP fallback.
+        # This changes only the build process; it is never part of the Android app.
+        if ($env:CODEX_WINDOWS_SANDBOX_PACKAGE_FAMILY) {
+            $taskSocketFallback = Join-Path $taskRoot '.build\gradle-no-unix-sockets'
+            if (Test-Path -LiteralPath $taskSocketFallback) { throw 'The Gradle socket fallback path must remain absent.' }
+            $env:JAVA_TOOL_OPTIONS = (($taskOldJavaOptions + ' "-Djdk.net.unixdomain.tmpdir=' + $taskSocketFallback + '"').Trim())
         }
-        Invoke-BuildTool $taskGradle $taskGradleArgs
-    } finally { Pop-Location }
-} finally {
-    $env:JAVA_HOME = $taskOldJavaHome
-    $env:ANDROID_HOME = $taskOldAndroidHome
-    $env:ANDROID_SDK_ROOT = $taskOldSdkRoot
-    $env:GRADLE_USER_HOME = $taskOldGradleHome
-    $env:JAVA_TOOL_OPTIONS = $taskOldJavaOptions
-}
-$taskBase = Join-Path $taskRoot 'app\build\outputs\apk\debug\app-debug.apk'
-if (!(Test-Path -LiteralPath $taskBase -PathType Leaf)) { throw 'Gradle did not produce the native UI APK.' }
+        Push-Location -LiteralPath $taskRoot
+        try {
+            $taskGradleArgs = @(':app:assembleDebug','--no-daemon',
+                ('-PlistenlyAssetsDir=' + (Join-Path $taskBuild 'main\assets')),
+                '-PlistenlySkipAssetPreparation=true')
+            if ($taskRoot -match '[^\x00-\x7F]') { $taskGradleArgs += '-Pandroid.overridePathCheck=true' }
+            if ($GradleInitScript) {
+                $taskInit = [IO.Path]::GetFullPath($GradleInitScript)
+                if (!(Test-Path -LiteralPath $taskInit -PathType Leaf)) { throw 'Gradle init script does not exist.' }
+                $taskGradleArgs += @('--init-script',$taskInit)
+            }
+            Invoke-BuildTool $taskGradle $taskGradleArgs
+        } finally { Pop-Location }
+    } finally {
+        $env:JAVA_HOME = $taskOldJavaHome
+        $env:ANDROID_HOME = $taskOldAndroidHome
+        $env:ANDROID_SDK_ROOT = $taskOldSdkRoot
+        $env:GRADLE_USER_HOME = $taskOldGradleHome
+        $env:JAVA_TOOL_OPTIONS = $taskOldJavaOptions
+    }
+    $taskBase = Join-Path $taskRoot 'app\build\outputs\apk\debug\app-debug.apk'
+    if (!(Test-Path -LiteralPath $taskBase -PathType Leaf)) { throw 'Gradle did not produce the native UI APK.' }
+ }
 $taskNormalizedApk = Join-Path $taskBuild 'normalized.apk'
 # Stream the complete Gradle APK, preserving all dex/resources/native libraries.
 # Normalize before 16 KiB ZIP alignment and signing with the existing local key.
@@ -222,6 +234,7 @@ Invoke-BuildTool $taskJava @('-jar',(Join-Path $taskTools.FullName 'lib\apksigne
 Invoke-BuildTool $taskJava @('-jar',(Join-Path $taskTools.FullName 'lib\apksigner.jar'),'verify','--verbose',$taskSigned)
 Invoke-BuildTool $taskPythonCommand.Source @($taskNormalizeTool,'--verify',$taskSigned)
 Invoke-BuildTool (Join-Path $taskTools.FullName 'zipalign.exe') @('-c','-P','16','4',$taskSigned)
+Invoke-BuildTool $taskPythonCommand.Source @((Join-Path $taskRoot 'tools\verify-native-apk.py'),$taskSigned,'--output',($OutputPath + '.native.json'))
 Copy-Item -LiteralPath $taskSigned -Destination $OutputPath -Force
 Write-Host "APK ready: $OutputPath"
 $taskTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
