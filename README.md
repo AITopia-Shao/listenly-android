@@ -4,6 +4,8 @@
 
 [下载 APK](https://github.com/AITopia-Shao/listenly-android/releases/latest) · [导入材料格式](docs/import-format.md) · [兼容性验证](docs/android-runtime-findings.md) · [MIT 许可证](LICENSE)
 
+当前 `codex/miuix-native` 分支为 **3.0 原生 Miuix 开发快照**，按要求直接同步未完成更新，尚未发布正式安装包。组件迁移、已完成检查及待验证项目见 [开发状态](docs/native-miuix.md)；上方下载入口仍指向已发布的稳定版本。
+
 | 整套播放器 | 精听 · 双语 | 整篇答题 |
 | --- | --- | --- |
 | ![整套播放器](docs/screenshots/suite-2-home.png) | ![双语精听](docs/screenshots/suite-2-reader.png) | ![整篇答题](docs/screenshots/suite-2-quiz.png) |

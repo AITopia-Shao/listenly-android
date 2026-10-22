@@ -10,7 +10,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
@@ -66,10 +65,22 @@ internal fun Modifier.nativeBounce(): Modifier = composed {
     val scale = animateFloatAsState(if (pressed) .955f else 1f, spring(dampingRatio = .62f, stiffness = 620f), label = "miuixPress")
     graphicsLayer { scaleX = scale.value; scaleY = scale.value }
         .pointerInput(Unit) {
+            val touchSlop = viewConfiguration.touchSlop
             awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                 pressed = true
-                try { waitForUpOrCancellation(pass = PointerEventPass.Final) } finally { pressed = false }
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Final)
+                        val pointer = event.changes.firstOrNull { it.id == down.id } ?: break
+                        // The real Miuix control consumes its click. Observe
+                        // pointer lifetime instead of treating that as cancel.
+                        if (!pointer.pressed || event.changes.count { it.pressed } > 1) break
+                        if ((pointer.position - down.position).getDistance() > touchSlop) break
+                        if (pointer.position.x < 0 || pointer.position.x > size.width ||
+                            pointer.position.y < 0 || pointer.position.y > size.height) break
+                    }
+                } finally { pressed = false }
             }
         }
 }
